@@ -3,7 +3,6 @@ export type Category =
   | "Aufbahrung"
   | "Krematorium"
   | "Fahrdienst"
-  | "Buero"
   | "Sonstiges";
 
 export const DEFAULT_CATEGORIES: Category[] = ["Beerdigung", "Aufbahrung", "Krematorium"];

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import React from "react";
+import { isoToGermanDate, parseGermanDate } from "@/lib/time";
 
 const tapMinStyle = { minHeight: "var(--tap-min)" } as const;
 const tapMinSquareStyle = {
@@ -155,6 +156,7 @@ export function Input({
   placeholder,
   required,
   name,
+  onBlur,
 }: {
   label: string;
   value: string;
@@ -163,6 +165,7 @@ export function Input({
   placeholder?: string;
   required?: boolean;
   name?: string;
+  onBlur?: () => void;
 }) {
   return (
     <label className="block">
@@ -173,11 +176,54 @@ export function Input({
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         placeholder={placeholder}
         className="w-full px-4 rounded-[var(--radius)] border border-[var(--divider)] bg-[var(--card)] text-[var(--foreground)]"
         style={tapMinStyle}
       />
     </label>
+  );
+}
+
+export function DateInput({
+  label,
+  value,
+  onChange,
+  required,
+  name,
+}: {
+  label: string;
+  value: string;
+  onChange: (iso: string) => void;
+  required?: boolean;
+  name?: string;
+}) {
+  const [display, setDisplay] = React.useState(() => (value ? isoToGermanDate(value) : ""));
+
+  React.useEffect(() => {
+    setDisplay(value ? isoToGermanDate(value) : "");
+  }, [value]);
+
+  return (
+    <Input
+      label={label}
+      name={name}
+      required={required}
+      value={display}
+      placeholder="17.06.2026"
+      onChange={(v) => {
+        setDisplay(v);
+        const iso = parseGermanDate(v);
+        if (iso) onChange(iso);
+      }}
+      onBlur={() => {
+        const iso = parseGermanDate(display);
+        if (iso) {
+          onChange(iso);
+          setDisplay(isoToGermanDate(iso));
+        }
+      }}
+    />
   );
 }
 

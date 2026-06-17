@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Button, Card, Input, OptionButton, Textarea } from "@/components/ui";
+import { Button, Card, DateInput, Input, OptionButton, Textarea } from "@/components/ui";
 import type { Category, Entry } from "@/lib/types";
 import { deleteEntry, getEntry, upsertEntry } from "@/lib/db";
 import { calcHours, formatGermanDate } from "@/lib/time";
@@ -12,7 +12,6 @@ const CATEGORIES: { value: Category; label: string }[] = [
   { value: "Aufbahrung", label: "Aufbahrung" },
   { value: "Krematorium", label: "Krematorium" },
   { value: "Fahrdienst", label: "Fahrdienst" },
-  { value: "Buero", label: "Büro" },
   { value: "Sonstiges", label: "Sonstiges" },
 ];
 
@@ -160,7 +159,7 @@ export default function EntryDetailPage() {
       ) : null}
 
       <Card className="flex flex-col gap-4">
-        <Input label="Datum (YYYY-MM-DD)" value={date} onChange={setDate} placeholder="2026-06-17" />
+        <DateInput label="Datum (TT.MM.JJJJ)" value={date} onChange={setDate} />
         <div className="grid grid-cols-2 gap-3">
           <Input label="Von" value={startTime} onChange={setStartTime} placeholder="08:00" />
           <Input label="Bis" value={endTime} onChange={setEndTime} placeholder="12:30" />

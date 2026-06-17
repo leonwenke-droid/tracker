@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Mic, FileDown, Settings, Menu } from "lucide-react";
+import { Home, Mic, FileDown, Settings } from "lucide-react";
 import React from "react";
 
 const navItems = [
@@ -49,16 +49,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-full bg-[var(--background)] text-[var(--foreground)]">
       <header className="sticky top-0 z-10 bg-[var(--background)]/95 backdrop-blur-sm border-b border-[var(--divider)]">
-        <div className="mx-auto max-w-md px-4 py-3 flex items-center justify-between">
+        <div className="mx-auto max-w-md px-4 py-3">
           <div className="text-xl font-bold tracking-tight">Zeiterfassung</div>
-          <button
-            type="button"
-            aria-label="Menü"
-            className="flex items-center justify-center rounded-[var(--radius)] text-[var(--foreground)] hover:bg-[var(--card)]"
-            style={{ minHeight: "var(--tap-min)", minWidth: "var(--tap-min)" }}
-          >
-            <Menu className="h-5 w-5" aria-hidden="true" />
-          </button>
         </div>
       </header>
 

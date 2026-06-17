@@ -4,16 +4,27 @@ import { LOCATION_CORRECTION_PROMPT } from "@/lib/parse-entry-locations";
 import { inferCategoriesFromText } from "@/lib/parse-entry-categories";
 import { sanitizeTextFields } from "@/lib/parse-entry-sanitize";
 import type { ParsedEntry } from "@/lib/types";
-import { calcHours } from "@/lib/time";
+import { calcHours, isoToGermanDate, parseGermanDate, toISODate } from "@/lib/time";
 
 export const runtime = "nodejs";
 
 function isoToday(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+  return toISODate(new Date());
+}
+
+function extractDateFromTranscript(text: string): string | null {
+  const patterns = [
+    /\b(\d{1,2})\.\s*([A-Za-zÄÖÜäöüß]+)\s+(\d{4})\b/gi,
+    /\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})\b/g,
+  ];
+  for (const pattern of patterns) {
+    const matches = [...text.matchAll(pattern)];
+    if (matches.length === 0) continue;
+    const last = matches[matches.length - 1][0];
+    const parsed = parseGermanDate(last);
+    if (parsed) return parsed;
+  }
+  return null;
 }
 
 function safeJsonParse(text: string): unknown {
@@ -28,10 +39,6 @@ function safeJsonParse(text: string): unknown {
 
 function isValidTime(t: string): boolean {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
-}
-
-function isValidISODate(d: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
 
 function normalizeTime(t: unknown): string | null {
@@ -53,9 +60,9 @@ function normalizeCategory(v: unknown): ParsedEntry["categories"][number] | null
     Aufbahrung: "Aufbahrung",
     Krematorium: "Krematorium",
     Fahrdienst: "Fahrdienst",
-    Buero: "Buero",
-    Büro: "Buero",
     Sonstiges: "Sonstiges",
+    Büro: "Sonstiges",
+    Buero: "Sonstiges",
   };
   return map[v.trim()] ?? null;
 }
@@ -116,15 +123,23 @@ function validateEntry(
   const o = obj as Record<string, unknown>;
   ensureCategories(o, transcript);
 
-  const date =
-    typeof o.date === "string" && isValidISODate(o.date.trim()) ? o.date.trim() : today;
-  if (typeof o.date === "string" && o.date.trim() && !isValidISODate(o.date.trim())) {
-    console.error("[parse-entry] invalid date, falling back to today", {
+  const rawDate = typeof o.date === "string" ? o.date.trim() : "";
+  const parsedFromModel = rawDate ? parseGermanDate(rawDate) : null;
+  let date: string;
+  if (parsedFromModel) {
+    date = parsedFromModel;
+  } else if (rawDate) {
+    console.error("[parse-entry] invalid date from model, trying transcript", {
       index,
       date: o.date,
     });
-  } else if (typeof o.date !== "string" || !o.date.trim()) {
-    console.error("[parse-entry] missing date, falling back to today", { index, date: o.date });
+    date = extractDateFromTranscript(transcript) ?? today;
+  } else {
+    const fromTranscript = extractDateFromTranscript(transcript);
+    date = fromTranscript ?? today;
+    if (!fromTranscript) {
+      console.error("[parse-entry] missing date, falling back to today", { index, date: o.date });
+    }
   }
 
   const startTime = normalizeTime(o.startTime);
@@ -191,19 +206,20 @@ function validateEntry(
 }
 
 function buildSystemPrompt(today: string): string {
+  const todayGerman = isoToGermanDate(today);
   return [
     "Du extrahierst strukturierte Arbeitszeit-Einträge aus gesprochener, informeller deutscher Sprache.",
-    "Kontext: Mitarbeiter/in in einem Bestattungsunternehmen (Aufbahrung, Beerdigung, Fahrdienst, Büro, Krematorium, Sonstiges).",
+    "Kontext: Mitarbeiter/in in einem Bestattungsunternehmen (Aufbahrung, Beerdigung, Fahrdienst, Krematorium, Sonstiges).",
     "",
     "Antworte NUR mit STRICT JSON (kein Markdown, kein Text, keine Erklärungen).",
     "Output-Schema:",
     "{",
     '  "entries": [',
     "    {",
-    '      "date": "YYYY-MM-DD",',
+    '      "date": "TT.MM.JJJJ",',
     '      "startTime": "HH:mm",',
     '      "endTime": "HH:mm",',
-    '      "categories": ["Beerdigung"|"Aufbahrung"|"Krematorium"|"Fahrdienst"|"Buero"|"Sonstiges", ...],',
+    '      "categories": ["Beerdigung"|"Aufbahrung"|"Krematorium"|"Fahrdienst"|"Sonstiges", ...],',
     '      "name": string,',
     '      "notes": string,',
     '      "reminders": string',
@@ -227,8 +243,13 @@ function buildSystemPrompt(today: string): string {
     '"reminders" nur beim LETZTEN Eintrag setzen, wenn mehrere Einträge erzeugt werden;',
     "bei allen anderen leerer String.",
     "",
+    "=== DATUM ===",
+    'Datum immer im deutschen Format TT.MM.JJJJ (z.B. "17.06.2026").',
+    'Auch bei gesprochenen Daten: "1. Juni 2026" → "01.06.2026", "17. Juni" mit Jahr → "17.06.2026".',
+    "Wenn dasselbe Datum mehrfach genannt wird: das letzte genannte Datum verwenden.",
+    `Wenn kein Datum genannt: ${todayGerman}.`,
+    "",
     "=== ZEITEN ===",
-    `Wenn kein Datum genannt: ${today}.`,
     "Zeiten als 24h HH:mm (z.B. 15:00, nicht nur 15).",
     "",
     "=== NAME (PFLICHT wenn genannt) ===",

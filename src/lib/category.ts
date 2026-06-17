@@ -19,7 +19,6 @@ const CATEGORIES: Category[] = [
   "Aufbahrung",
   "Krematorium",
   "Fahrdienst",
-  "Buero",
   "Sonstiges",
 ];
 

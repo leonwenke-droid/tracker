@@ -5,7 +5,6 @@ const ALL_CATEGORIES: Category[] = [
   "Aufbahrung",
   "Krematorium",
   "Fahrdienst",
-  "Buero",
   "Sonstiges",
 ];
 
@@ -14,7 +13,6 @@ const KEYWORD_RULES: { pattern: RegExp; category: Category }[] = [
   { pattern: /\b(aufbahrung|aufgebahrt|aufba(h|h)ren)\b/i, category: "Aufbahrung" },
   { pattern: /\b(beerdigung|beisetzung|trauerfeier|friedhof|verabschiedung)\b/i, category: "Beerdigung" },
   { pattern: /\b(krematorium|einaescherung|einäscherung|kremation)\b/i, category: "Krematorium" },
-  { pattern: /\b(buero|büro|verwaltung|schreibtisch)\b/i, category: "Buero" },
 ];
 
 /** Server-side fallback when the model returns no categories. */

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Mic, RotateCcw, Check, Save, PencilLine, ArrowLeft, ChevronRight } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { Button, Card, IconButton, Input, ListCard, ListRow, OptionButton, Textarea } from "@/components/ui";
+import { Button, Card, IconButton, Input, ListCard, ListRow, OptionButton, Textarea, DateInput } from "@/components/ui";
 import type { Category, Entry, ParseEntryResponse } from "@/lib/types";
 import { upsertEntry } from "@/lib/db";
 import { calcHours } from "@/lib/time";
@@ -41,7 +41,6 @@ const CATEGORIES: { value: Category; label: string }[] = [
   { value: "Aufbahrung", label: "Aufbahrung" },
   { value: "Krematorium", label: "Krematorium" },
   { value: "Fahrdienst", label: "Fahrdienst" },
-  { value: "Buero", label: "Büro" },
   { value: "Sonstiges", label: "Sonstiges" },
 ];
 
@@ -496,8 +495,8 @@ export default function SprechenPage() {
               <div className="text-sm opacity-80">{activeDraft.categoryReason}</div>
             ) : null}
             <div className="grid grid-cols-1 gap-3">
-              <Input
-                label="Datum (YYYY-MM-DD)"
+              <DateInput
+                label="Datum (TT.MM.JJJJ)"
                 value={activeDraft.date}
                 onChange={(v) => updateActiveDraft({ date: v })}
               />

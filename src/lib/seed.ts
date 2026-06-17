@@ -28,7 +28,7 @@ export async function ensureSeedData() {
       startTime: "08:00",
       endTime: "12:30",
       hours: 4.5,
-      categories: ["Buero"],
+      categories: ["Sonstiges"],
       name: "",
       notes: "Telefonate, Unterlagen vorbereitet.",
       reminders: "",

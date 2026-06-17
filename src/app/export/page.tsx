@@ -14,7 +14,7 @@ function formatHoursDE(h: number) {
 }
 
 function categoryLabel(c: Category) {
-  return c === "Buero" ? "Büro" : c;
+  return c;
 }
 
 export default function ExportPage() {

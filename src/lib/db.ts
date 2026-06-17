@@ -19,7 +19,7 @@ let dbPromise: Promise<IDBPDatabase<TrackerDB>> | null = null;
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<TrackerDB>("tracker-db", 3, {
+    dbPromise = openDB<TrackerDB>("tracker-db", 4, {
       async upgrade(db, oldVersion, _newVersion, tx) {
         if (!db.objectStoreNames.contains("entries")) {
           const store = db.createObjectStore("entries", { keyPath: "id" });
@@ -50,6 +50,14 @@ function getDB() {
 
           if (oldVersion < 3 && typeof obj.reminders !== "string") {
             obj.reminders = "";
+            changed = true;
+          }
+
+          if (oldVersion < 4 && Array.isArray(obj.categories)) {
+            const mapped = (obj.categories as string[]).map((c) =>
+              c === "Buero" || c === "Büro" ? "Sonstiges" : c,
+            );
+            obj.categories = Array.from(new Set(mapped));
             changed = true;
           }
 

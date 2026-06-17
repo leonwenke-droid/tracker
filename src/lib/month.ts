@@ -16,7 +16,6 @@ export function countByTask(entries: Entry[]) {
     Aufbahrung: 0,
     Krematorium: 0,
     Fahrdienst: 0,
-    Buero: 0,
     Sonstiges: 0,
   };
   for (const e of entries) {
