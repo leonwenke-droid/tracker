@@ -36,7 +36,7 @@ export function EntriesPdfDoc({
   return (
     <Document>
       <Page size="A4" style={styles.page}>
-        <Text style={styles.title}>Tracker – Export {monthLabel}</Text>
+        <Text style={styles.title}>Zeiterfassung – Export {monthLabel}</Text>
 
         <View style={styles.tableHeader}>
           <Text style={[styles.cellDate, styles.bold]}>Datum</Text>

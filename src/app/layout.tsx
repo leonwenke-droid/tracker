@@ -15,13 +15,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tracker",
+  title: "Zeiterfassung",
   description: "Arbeitszeiten einfach erfassen – lokal auf dem Gerät.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Tracker",
+    title: "Zeiterfassung",
   },
   icons: {
     icon: [{ url: "/icons/icon.svg", type: "image/svg+xml" }],

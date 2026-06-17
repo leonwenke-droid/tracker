@@ -1,6 +1,6 @@
 {
-  "name": "Tracker",
-  "short_name": "Tracker",
+  "name": "Zeiterfassung",
+  "short_name": "Zeiterfassung",
   "description": "Arbeitszeiten einfach erfassen – lokal auf dem Gerät.",
   "start_url": "/",
   "display": "standalone",

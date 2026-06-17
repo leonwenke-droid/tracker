@@ -39,7 +39,7 @@ export default function ExportPage() {
   const counts = useMemo(() => countByTask(monthEntries), [monthEntries]);
   const monthLabel = useMemo(() => monthLabelDE(year, month), [year, month]);
   const filename = useMemo(
-    () => `Tracker_${year}-${String(month + 1).padStart(2, "0")}.pdf`,
+    () => `Zeiterfassung_${year}-${String(month + 1).padStart(2, "0")}.pdf`,
     [year, month],
   );
 

@@ -50,7 +50,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-full bg-[var(--background)] text-[var(--foreground)]">
       <header className="sticky top-0 z-10 bg-[var(--background)]/95 backdrop-blur-sm border-b border-[var(--divider)]">
         <div className="mx-auto max-w-md px-4 py-3 flex items-center justify-between">
-          <div className="text-xl font-bold tracking-tight">Tracker</div>
+          <div className="text-xl font-bold tracking-tight">Zeiterfassung</div>
           <button
             type="button"
             aria-label="Menü"

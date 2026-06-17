@@ -1,4 +1,4 @@
-# Tracker – Arbeitszeiten erfassen
+# Zeiterfassung – Arbeitszeiten erfassen
 
 PWA für Zeiterfassung im Bestattungsunternehmen (Deutsch, lokal im Browser, Spracheingabe mit KI-Auswertung).
 

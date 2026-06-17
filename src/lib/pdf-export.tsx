@@ -27,7 +27,7 @@ export function canSharePdf(blob: Blob, filename: string) {
 
 export async function sharePdf(blob: Blob, filename: string) {
   const file = new File([blob], filename, { type: "application/pdf" });
-  await navigator.share({ files: [file], title: "Tracker Export" });
+  await navigator.share({ files: [file], title: "Zeiterfassung Export" });
 }
 
 export async function buildEntriesPdfBlob(input: {
