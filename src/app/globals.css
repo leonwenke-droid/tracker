@@ -1,8 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f7f8fa;
+  --foreground: #0a0b0d;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --divider: #e5e7eb;
+  --accent: #0052ff;
+
+  --font-size-base: 18px;
+  --tap-min: 48px;
+  --line-height-base: 1.5;
+  --radius: 12px;
+  --border: #e5e7eb;
 }
 
 @theme inline {
@@ -12,15 +22,94 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, Segoe UI,
+    Roboto, Arial, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.theme-light {
+  --background: #f7f8fa;
+  --foreground: #0a0b0d;
+  --card: #ffffff;
+  --muted: #6b7280;
+  --divider: #e5e7eb;
+  --border: #e5e7eb;
+  --accent: #0052ff;
+}
+
+.theme-dark {
+  --background: #0a0b0d;
+  --foreground: #f5f5f5;
+  --card: #141519;
+  --muted: #9ca3af;
+  --divider: #2a2d35;
+  --border: #2a2d35;
+  --accent: #4d8dff;
+}
+
+.theme-high-contrast {
+  --background: #ffffff;
+  --foreground: #000000;
+  --card: #ffffff;
+  --muted: #333333;
+  --divider: #000000;
+  --border: #000000;
+  --accent: #003cff;
+}
+
+.font-normal {
+  --font-size-base: 18px;
+  --tap-min: 48px;
+}
+.font-large {
+  --font-size-base: 22px;
+  --tap-min: 54px;
+}
+.font-extra-large {
+  --font-size-base: 26px;
+  --tap-min: 60px;
+}
+
+.stat-ticker {
+  font-size: clamp(
+    calc(var(--font-size-base) * 2.75),
+    12vw,
+    calc(var(--font-size-base) * 4.25)
+  );
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  color: var(--foreground);
+}
+
+.section-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -1,0 +1,25 @@
+{
+  "name": "Tracker",
+  "short_name": "Tracker",
+  "description": "Arbeitszeiten einfach erfassen – lokal auf dem Gerät.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F7F8FA",
+  "theme_color": "#F7F8FA",
+  "lang": "de-DE",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
+
