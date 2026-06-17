@@ -16,7 +16,7 @@ npm run dev
 
 | Variable | Beschreibung |
 |----------|--------------|
-| `OPENAI_API_KEY` | Für `/api/parse-entry` (Spracheingabe-Auswertung) |
+| `OPENAI_API_KEY` | Für Sprachtranskription (`/api/transcribe`) und Eintrags-Auswertung (`/api/parse-entry`) |
 
 ## Deploy auf Vercel
 

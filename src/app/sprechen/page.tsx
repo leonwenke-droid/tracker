@@ -9,7 +9,12 @@ import { Button, Card, IconButton, Input, ListCard, ListRow, OptionButton, Texta
 import type { Category, Entry, ParseEntryResponse } from "@/lib/types";
 import { upsertEntry } from "@/lib/db";
 import { calcHours } from "@/lib/time";
-import { createSpeechRecognition, getSpeechSupport } from "@/lib/speech";
+import {
+  getRecordingSupport,
+  recordingExtension,
+  startAudioRecording,
+  type AudioRecordingSession,
+} from "@/lib/audio-recording";
 import { applyCategoryRules, learnCategoryRules } from "@/lib/category";
 
 type Step = "ready" | "listening" | "processing" | "transcript" | "review" | "parsed" | "saved";
@@ -25,52 +30,10 @@ type DraftEntry = {
   categoryReason: string | null;
 };
 
-const FINALIZE_DELAY_MS = 900;
-const FINALIZE_MAX_WAIT_MS = 3500;
-
-/** Append a speech segment without duplicating overlapping prefix (Chrome cumulative finals). */
-function appendWithOverlap(accumulated: string, segment: string): string {
-  const seg = segment.trim();
-  if (!seg) return accumulated;
-  const acc = accumulated.trim();
-  if (!acc) return seg;
-
-  const accWords = acc.split(/\s+/);
-  const segWords = seg.split(/\s+/);
-  const maxOverlap = Math.min(accWords.length, segWords.length);
-
-  let overlap = 0;
-  for (let k = maxOverlap; k >= 1; k--) {
-    const accSuffix = accWords.slice(-k).map((w) => w.toLowerCase());
-    const segPrefix = segWords.slice(0, k).map((w) => w.toLowerCase());
-    if (accSuffix.every((w, i) => w === segPrefix[i])) {
-      overlap = k;
-      break;
-    }
-  }
-
-  const newWords = segWords.slice(overlap);
-  if (newWords.length === 0) return acc;
-  return `${acc} ${newWords.join(" ")}`;
-}
-
-function transcriptFromResults(results: SpeechRecognitionResultList): string {
-  let accumulated = "";
-  let interim = "";
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    const text = String(r?.[0]?.transcript ?? "").trim();
-    if (!text) continue;
-    if (r.isFinal) {
-      accumulated = appendWithOverlap(accumulated, text);
-    } else {
-      interim = text;
-    }
-  }
-  if (interim) {
-    accumulated = appendWithOverlap(accumulated, interim);
-  }
-  return accumulated;
+function formatRecordingDuration(seconds: number) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 const CATEGORIES: { value: Category; label: string }[] = [
@@ -92,18 +55,13 @@ function formatTimeRange(startTime: string, endTime: string) {
 
 export default function SprechenPage() {
   const router = useRouter();
-  const support = useMemo(() => getSpeechSupport(), []);
-  const recRef = useRef<SpeechRecognition | null>(null);
-  const transcriptRef = useRef<string>("");
-  const baseTranscriptRef = useRef<string>("");
-  const listeningActiveRef = useRef(false);
-  const stoppingRef = useRef(false);
-  const finalizeTimerRef = useRef<number | null>(null);
-  const finalizeDeadlineRef = useRef<number>(0);
+  const recordingSupport = useMemo(() => getRecordingSupport(), []);
+  const recordingRef = useRef<AudioRecordingSession | null>(null);
+  const timerRef = useRef<number | null>(null);
   const savedSummaryRef = useRef({ count: 0, totalHours: 0 });
 
   const [step, setStep] = useState<Step>("ready");
-  const [liveText, setLiveText] = useState("");
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState("");
   const [parsing, setParsing] = useState(false);
@@ -118,62 +76,33 @@ export default function SprechenPage() {
     [activeDraft],
   );
 
-  function clearFinalizeTimer() {
-    if (finalizeTimerRef.current !== null) {
-      window.clearTimeout(finalizeTimerRef.current);
-      finalizeTimerRef.current = null;
+  function clearRecordingTimer() {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
     }
   }
 
-  function finalizeTranscript() {
-    clearFinalizeTimer();
-    stoppingRef.current = false;
-    listeningActiveRef.current = false;
-    const finalText = transcriptRef.current.trim();
-    setLiveText("");
-    if (!finalText) {
-      setStep("ready");
-      return;
-    }
-    setTranscript(finalText);
-    setStep("transcript");
-  }
-
-  function scheduleFinalize() {
-    clearFinalizeTimer();
-    const now = Date.now();
-    const deadline = finalizeDeadlineRef.current;
-    if (now >= deadline) {
-      finalizeTranscript();
-      return;
-    }
-    const delay = Math.min(FINALIZE_DELAY_MS, deadline - now);
-    finalizeTimerRef.current = window.setTimeout(() => {
-      finalizeTimerRef.current = null;
-      finalizeTranscript();
-    }, delay);
+  function cancelActiveRecording() {
+    clearRecordingTimer();
+    recordingRef.current?.cancel();
+    recordingRef.current = null;
+    setRecordingSeconds(0);
   }
 
   useEffect(() => {
     return () => {
-      clearFinalizeTimer();
-      try {
-        recRef.current?.abort();
-      } catch {
-        // ignore
+      if (timerRef.current !== null) {
+        window.clearInterval(timerRef.current);
       }
+      recordingRef.current?.cancel();
     };
   }, []);
 
   function resetAll() {
-    clearFinalizeTimer();
-    stoppingRef.current = false;
-    listeningActiveRef.current = false;
+    cancelActiveRecording();
     setError(null);
     setTranscript("");
-    setLiveText("");
-    transcriptRef.current = "";
-    baseTranscriptRef.current = "";
     setParsing(false);
     setSaving(false);
     setDrafts([]);
@@ -189,106 +118,79 @@ export default function SprechenPage() {
     );
   }
 
-  function restartRecognition(rec: SpeechRecognition) {
-    if (!listeningActiveRef.current || stoppingRef.current) return;
-    baseTranscriptRef.current = transcriptRef.current;
-    const attempt = () => {
-      if (!listeningActiveRef.current || stoppingRef.current) return;
-      try {
-        rec.start();
-      } catch {
-        window.setTimeout(attempt, 150);
-      }
-    };
-    window.setTimeout(attempt, 50);
-  }
-
-  function startListening() {
+  async function startListening() {
     setError(null);
-    if (!support.supported) {
-      setError("Dein Browser unterstützt keine Spracherkennung. Bitte nutze „Manuell eintragen“.");
+    if (!recordingSupport.supported) {
+      setError("Dein Browser unterstützt keine Audioaufnahme. Bitte nutze „Manuell eintragen“.");
       return;
     }
-    const rec = createSpeechRecognition("de-DE");
-    if (!rec) {
-      setError("Spracherkennung ist nicht verfügbar. Bitte nutze „Manuell eintragen“.");
-      return;
-    }
-    rec.continuous = true;
-    rec.interimResults = true;
-    stoppingRef.current = false;
-    listeningActiveRef.current = true;
-    transcriptRef.current = "";
-    baseTranscriptRef.current = "";
-    setLiveText("");
-    recRef.current = rec;
-    setStep("listening");
-
-    rec.onresult = (event: SpeechRecognitionEvent) => {
-      const sessionText = transcriptFromResults(event.results);
-      const combined = baseTranscriptRef.current
-        ? appendWithOverlap(baseTranscriptRef.current, sessionText)
-        : sessionText;
-      transcriptRef.current = combined;
-      setLiveText(combined);
-      if (stoppingRef.current) scheduleFinalize();
-    };
-    rec.onerror = (event: SpeechRecognitionErrorEvent) => {
-      const code = String(event.error ?? "");
-      if (stoppingRef.current && code === "no-speech") {
-        scheduleFinalize();
-        return;
-      }
-      if (!stoppingRef.current && (code === "no-speech" || code === "network")) {
-        restartRecognition(rec);
-        return;
-      }
-      clearFinalizeTimer();
-      stoppingRef.current = false;
-      listeningActiveRef.current = false;
-      if (code === "not-allowed" || code === "service-not-allowed") {
-        setError("Mikrofon-Zugriff abgelehnt. Bitte erlaube das Mikrofon in den Browser-Einstellungen.");
-      } else if (code === "no-speech") {
-        setError("Keine Sprache erkannt. Bitte sprich etwas lauter oder näher am Mikrofon.");
-      } else if (code === "audio-capture") {
-        setError("Kein Mikrofon gefunden. Bitte prüfe dein Gerät.");
-      } else if (code !== "aborted") {
-        setError("Spracherkennung fehlgeschlagen. Bitte versuche es erneut oder nutze „Manuell eintragen“.");
-      }
-      setStep("ready");
-    };
-    rec.onend = () => {
-      if (stoppingRef.current) {
-        scheduleFinalize();
-        return;
-      }
-      if (listeningActiveRef.current) {
-        restartRecognition(rec);
-        return;
-      }
-      setStep((s) => (s === "listening" ? "ready" : s));
-    };
-
     try {
-      rec.start();
-    } catch {
-      listeningActiveRef.current = false;
-      setError("Konnte Spracherkennung nicht starten. Bitte nutze „Manuell eintragen“.");
+      const session = await startAudioRecording();
+      recordingRef.current = session;
+      setRecordingSeconds(0);
+      timerRef.current = window.setInterval(() => {
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
+      setStep("listening");
+    } catch (e: unknown) {
+      cancelActiveRecording();
+      const denied =
+        e instanceof DOMException &&
+        (e.name === "NotAllowedError" || e.name === "PermissionDeniedError");
+      if (denied) {
+        setError("Mikrofon-Zugriff abgelehnt. Bitte erlaube das Mikrofon in den Browser-Einstellungen.");
+      } else {
+        setError("Konnte Aufnahme nicht starten. Bitte nutze „Manuell eintragen“.");
+      }
       setStep("ready");
     }
   }
 
-  function stopListening() {
-    if (stoppingRef.current) return;
-    stoppingRef.current = true;
-    finalizeDeadlineRef.current = Date.now() + FINALIZE_MAX_WAIT_MS;
+  async function stopListening() {
+    const session = recordingRef.current;
+    if (!session || step !== "listening") return;
+
+    clearRecordingTimer();
+    recordingRef.current = null;
     setStep("processing");
+
     try {
-      recRef.current?.stop();
+      const blob = await session.stop();
+      if (blob.size < 500) {
+        setError("Keine Sprache aufgenommen. Bitte sprich etwas lauter oder näher am Mikrofon.");
+        setStep("ready");
+        return;
+      }
+
+      const formData = new FormData();
+      const ext = recordingExtension(session.mimeType);
+      formData.append("audio", blob, `recording.${ext}`);
+
+      const res = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data?.error || "Transkription fehlgeschlagen.");
+        setStep("ready");
+        return;
+      }
+
+      const text = typeof data?.transcript === "string" ? data.transcript.trim() : "";
+      if (!text) {
+        setError("Keine Sprache erkannt. Bitte versuche es erneut.");
+        setStep("ready");
+        return;
+      }
+
+      setTranscript(text);
+      setRecordingSeconds(0);
+      setStep("transcript");
     } catch {
-      // ignore
+      setError("Transkription fehlgeschlagen. Bitte versuche es erneut oder nutze „Manuell eintragen“.");
+      setStep("ready");
     }
-    scheduleFinalize();
   }
 
   async function buildDraftsFromResponse(entries: ParseEntryResponse["entries"]): Promise<DraftEntry[]> {
@@ -468,7 +370,7 @@ export default function SprechenPage() {
         </IconButton>
         <div>
           <div className="text-lg font-semibold">Spracheingabe</div>
-          <div className="text-sm text-[var(--muted)]">Bitte kurz und deutlich sprechen.</div>
+          <div className="text-sm text-[var(--muted)]">Sprich in deinem Tempo – Pausen sind in Ordnung.</div>
         </div>
       </div>
 
@@ -505,15 +407,17 @@ export default function SprechenPage() {
           </button>
           <div className="text-sm text-[var(--muted)] text-center">
             {step === "listening"
-              ? "Nochmal tippen, um die Aufnahme zu beenden."
-              : "Tippen zum Starten. Nochmal tippen zum Stoppen."}
+              ? "Nochmal tippen, wenn du fertig bist."
+              : "Tippen zum Starten. Nochmal tippen zum Beenden."}
           </div>
-          {step === "listening" && liveText ? (
-            <div className="w-full rounded-[var(--radius)] bg-[var(--background)] p-3 text-sm">{liveText}</div>
+          {step === "listening" ? (
+            <div className="text-2xl font-bold tabular-nums text-[var(--accent)]">
+              {formatRecordingDuration(recordingSeconds)}
+            </div>
           ) : null}
-          {!support.supported ? (
+          {!recordingSupport.supported ? (
             <div className="text-sm text-[var(--muted)] text-center">
-              Dein Browser unterstützt keine Spracherkennung.
+              Dein Browser unterstützt keine Audioaufnahme.
             </div>
           ) : null}
         </Card>
@@ -521,15 +425,10 @@ export default function SprechenPage() {
 
       {step === "processing" ? (
         <Card className="flex flex-col gap-3">
-          <div className="font-semibold">Text wird verarbeitet…</div>
+          <div className="font-semibold">Sprache wird erkannt…</div>
           <div className="text-sm opacity-80">
-            Bitte kurz warten – der letzte Teil deiner Sprache wird noch erfasst.
+            Bitte kurz warten – deine Aufnahme wird in Text umgewandelt.
           </div>
-          {liveText ? (
-            <div className="rounded-[var(--radius)] bg-[var(--background)] p-3">{liveText}</div>
-          ) : (
-            <div className="rounded-[var(--radius)] bg-[var(--background)] p-3 text-[var(--muted)]">…</div>
-          )}
         </Card>
       ) : null}
 
