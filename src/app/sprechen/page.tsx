@@ -28,17 +28,49 @@ type DraftEntry = {
 const FINALIZE_DELAY_MS = 900;
 const FINALIZE_MAX_WAIT_MS = 3500;
 
+/** Append a speech segment without duplicating overlapping prefix (Chrome cumulative finals). */
+function appendWithOverlap(accumulated: string, segment: string): string {
+  const seg = segment.trim();
+  if (!seg) return accumulated;
+  const acc = accumulated.trim();
+  if (!acc) return seg;
+
+  const accWords = acc.split(/\s+/);
+  const segWords = seg.split(/\s+/);
+  const maxOverlap = Math.min(accWords.length, segWords.length);
+
+  let overlap = 0;
+  for (let k = maxOverlap; k >= 1; k--) {
+    const accSuffix = accWords.slice(-k).map((w) => w.toLowerCase());
+    const segPrefix = segWords.slice(0, k).map((w) => w.toLowerCase());
+    if (accSuffix.every((w, i) => w === segPrefix[i])) {
+      overlap = k;
+      break;
+    }
+  }
+
+  const newWords = segWords.slice(overlap);
+  if (newWords.length === 0) return acc;
+  return `${acc} ${newWords.join(" ")}`;
+}
+
 function transcriptFromResults(results: SpeechRecognitionResultList): string {
-  const finals: string[] = [];
+  let accumulated = "";
   let interim = "";
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     const text = String(r?.[0]?.transcript ?? "").trim();
     if (!text) continue;
-    if (r.isFinal) finals.push(text);
-    else interim = text;
+    if (r.isFinal) {
+      accumulated = appendWithOverlap(accumulated, text);
+    } else {
+      interim = text;
+    }
   }
-  return [...finals, interim].filter(Boolean).join(" ");
+  if (interim) {
+    accumulated = appendWithOverlap(accumulated, interim);
+  }
+  return accumulated;
 }
 
 const CATEGORIES: { value: Category; label: string }[] = [
@@ -198,6 +230,13 @@ export default function SprechenPage() {
     };
     rec.onend = () => {
       if (stoppingRef.current) {
+        scheduleFinalize();
+        return;
+      }
+      if (transcriptRef.current.trim()) {
+        stoppingRef.current = true;
+        finalizeDeadlineRef.current = Date.now();
+        setStep("processing");
         scheduleFinalize();
         return;
       }
