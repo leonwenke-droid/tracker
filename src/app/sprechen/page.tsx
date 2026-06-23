@@ -9,15 +9,10 @@ import { Button, Card, IconButton, Input, ListCard, ListRow, OptionButton, Texta
 import type { Category, Entry, ParseEntryResponse } from "@/lib/types";
 import { upsertEntry } from "@/lib/db";
 import { calcHours } from "@/lib/time";
-import {
-  getRecordingSupport,
-  recordingExtension,
-  startAudioRecording,
-  type AudioRecordingSession,
-} from "@/lib/audio-recording";
+import { useVoiceCapture } from "@/lib/voice-capture";
 import { applyCategoryRules, learnCategoryRules } from "@/lib/category";
 
-type Step = "ready" | "listening" | "processing" | "transcript" | "review" | "parsed" | "saved";
+type PostCaptureStep = "transcript" | "review" | "parsed" | "saved";
 
 type DraftEntry = {
   date: string;
@@ -29,12 +24,6 @@ type DraftEntry = {
   reminders: string;
   categoryReason: string | null;
 };
-
-function formatRecordingDuration(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
 
 const CATEGORIES: { value: Category; label: string }[] = [
   { value: "Beerdigung", label: "Beerdigung" },
@@ -54,15 +43,11 @@ function formatTimeRange(startTime: string, endTime: string) {
 
 export default function SprechenPage() {
   const router = useRouter();
-  const recordingSupport = useMemo(() => getRecordingSupport(), []);
-  const recordingRef = useRef<AudioRecordingSession | null>(null);
-  const timerRef = useRef<number | null>(null);
+  const voice = useVoiceCapture();
   const savedSummaryRef = useRef({ count: 0, totalHours: 0 });
 
-  const [step, setStep] = useState<Step>("ready");
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [transcript, setTranscript] = useState("");
+  const [postStep, setPostStep] = useState<PostCaptureStep | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [drafts, setDrafts] = useState<DraftEntry[]>([]);
@@ -75,40 +60,24 @@ export default function SprechenPage() {
     [activeDraft],
   );
 
-  function clearRecordingTimer() {
-    if (timerRef.current !== null) {
-      window.clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }
-
-  function cancelActiveRecording() {
-    clearRecordingTimer();
-    recordingRef.current?.cancel();
-    recordingRef.current = null;
-    setRecordingSeconds(0);
-  }
+  const error = pageError ?? voice.error;
 
   useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) {
-        window.clearInterval(timerRef.current);
-      }
-      recordingRef.current?.cancel();
-    };
-  }, []);
+    if (voice.step === "done" && postStep === null) {
+      setPostStep("transcript");
+    }
+  }, [voice.step, postStep]);
 
   function resetAll() {
-    cancelActiveRecording();
-    setError(null);
-    setTranscript("");
+    voice.reset();
+    setPageError(null);
     setParsing(false);
     setSaving(false);
     setDrafts([]);
     setActiveIndex(0);
     savedSummaryRef.current = { count: 0, totalHours: 0 };
     setSavedSummary({ count: 0, totalHours: 0 });
-    setStep("ready");
+    setPostStep(null);
   }
 
   function updateActiveDraft(patch: Partial<DraftEntry>) {
@@ -117,86 +86,11 @@ export default function SprechenPage() {
     );
   }
 
-  async function startListening() {
-    setError(null);
-    if (!recordingSupport.supported) {
-      setError("Dein Browser unterstützt keine Audioaufnahme. Bitte nutze „Manuell eintragen“.");
-      return;
-    }
-    try {
-      const session = await startAudioRecording();
-      recordingRef.current = session;
-      setRecordingSeconds(0);
-      timerRef.current = window.setInterval(() => {
-        setRecordingSeconds((s) => s + 1);
-      }, 1000);
-      setStep("listening");
-    } catch (e: unknown) {
-      cancelActiveRecording();
-      const denied =
-        e instanceof DOMException &&
-        (e.name === "NotAllowedError" || e.name === "PermissionDeniedError");
-      if (denied) {
-        setError("Mikrofon-Zugriff abgelehnt. Bitte erlaube das Mikrofon in den Browser-Einstellungen.");
-      } else {
-        setError("Konnte Aufnahme nicht starten. Bitte nutze „Manuell eintragen“.");
-      }
-      setStep("ready");
-    }
-  }
-
-  async function stopListening() {
-    const session = recordingRef.current;
-    if (!session || step !== "listening") return;
-
-    clearRecordingTimer();
-    recordingRef.current = null;
-    setStep("processing");
-
-    try {
-      const blob = await session.stop();
-      if (blob.size < 500) {
-        setError("Keine Sprache aufgenommen. Bitte sprich etwas lauter oder näher am Mikrofon.");
-        setStep("ready");
-        return;
-      }
-
-      const formData = new FormData();
-      const ext = recordingExtension(session.mimeType);
-      formData.append("audio", blob, `recording.${ext}`);
-
-      const res = await fetch("/api/transcribe", {
-        method: "POST",
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data?.error || "Transkription fehlgeschlagen.");
-        setStep("ready");
-        return;
-      }
-
-      const text = typeof data?.transcript === "string" ? data.transcript.trim() : "";
-      if (!text) {
-        setError("Keine Sprache erkannt. Bitte versuche es erneut.");
-        setStep("ready");
-        return;
-      }
-
-      setTranscript(text);
-      setRecordingSeconds(0);
-      setStep("transcript");
-    } catch {
-      setError("Transkription fehlgeschlagen. Bitte versuche es erneut oder nutze „Manuell eintragen“.");
-      setStep("ready");
-    }
-  }
-
   async function buildDraftsFromResponse(entries: ParseEntryResponse["entries"]): Promise<DraftEntry[]> {
     return Promise.all(
       entries.map(async (parsed) => {
         const applied = await applyCategoryRules({
-          transcript,
+          transcript: voice.transcript,
           name: parsed.name ?? "",
           notes: parsed.notes ?? "",
           fallbackCategories: parsed.categories ?? ["Sonstiges"],
@@ -216,32 +110,32 @@ export default function SprechenPage() {
   }
 
   async function parseTranscript() {
-    setError(null);
+    setPageError(null);
     setParsing(true);
     try {
       const res = await fetch("/api/parse-entry", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript }),
+        body: JSON.stringify({ transcript: voice.transcript }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data?.error || "Auswertung fehlgeschlagen.");
+        setPageError(data?.error || "Auswertung fehlgeschlagen.");
         setParsing(false);
         return;
       }
       const { entries } = data as ParseEntryResponse;
       if (!entries?.length) {
-        setError("Konnte Text nicht zuverlässig auswerten.");
+        setPageError("Konnte Text nicht zuverlässig auswerten.");
         setParsing(false);
         return;
       }
       const nextDrafts = await buildDraftsFromResponse(entries);
       setDrafts(nextDrafts);
       setActiveIndex(0);
-      setStep(nextDrafts.length > 1 ? "review" : "parsed");
+      setPostStep(nextDrafts.length > 1 ? "review" : "parsed");
     } catch {
-      setError("Keine Verbindung zur Auswertung. Bitte versuche es erneut.");
+      setPageError("Keine Verbindung zur Auswertung. Bitte versuche es erneut.");
     } finally {
       setParsing(false);
     }
@@ -249,7 +143,7 @@ export default function SprechenPage() {
 
   function openDraft(index: number) {
     setActiveIndex(index);
-    setStep("parsed");
+    setPostStep("parsed");
   }
 
   function validateDraft(draft: DraftEntry): string | null {
@@ -280,7 +174,7 @@ export default function SprechenPage() {
     };
     await upsertEntry(entry);
     await learnCategoryRules({
-      transcript,
+      transcript: voice.transcript,
       name: draft.name,
       notes: draft.notes,
       chosenCategories: draft.categories,
@@ -299,10 +193,10 @@ export default function SprechenPage() {
 
   async function saveCurrentEntry() {
     if (!activeDraft) return;
-    setError(null);
+    setPageError(null);
     const validationError = validateDraft(activeDraft);
     if (validationError) {
-      setError(validationError);
+      setPageError(validationError);
       return;
     }
     setSaving(true);
@@ -312,26 +206,26 @@ export default function SprechenPage() {
       const remaining = drafts.filter((_, i) => i !== activeIndex);
       setDrafts(remaining);
       if (remaining.length === 0) {
-        setStep("saved");
+        setPostStep("saved");
         router.refresh();
       } else {
         setActiveIndex(0);
-        setStep("review");
+        setPostStep("review");
         router.refresh();
       }
     } catch {
-      setError("Speichern fehlgeschlagen.");
+      setPageError("Speichern fehlgeschlagen.");
     } finally {
       setSaving(false);
     }
   }
 
   async function saveAllEntries() {
-    setError(null);
+    setPageError(null);
     for (const draft of drafts) {
       const validationError = validateDraft(draft);
       if (validationError) {
-        setError(validationError);
+        setPageError(validationError);
         return;
       }
     }
@@ -342,22 +236,23 @@ export default function SprechenPage() {
         recordSaved(hours);
       }
       setDrafts([]);
-      setStep("saved");
+      setPostStep("saved");
       router.refresh();
     } catch {
-      setError("Speichern fehlgeschlagen.");
+      setPageError("Speichern fehlgeschlagen.");
     } finally {
       setSaving(false);
     }
   }
 
   function toggleListening() {
-    if (step === "ready") startListening();
-    else if (step === "listening") stopListening();
+    if (voice.step === "ready") voice.start();
+    else if (voice.step === "listening") voice.stop();
   }
 
+  const capturing = postStep === null;
   const micButtonClass =
-    step === "listening"
+    voice.step === "listening"
       ? "bg-[var(--accent)] text-white shadow-sm"
       : "bg-[var(--card)] text-[var(--foreground)] border border-[var(--divider)]";
 
@@ -385,56 +280,58 @@ export default function SprechenPage() {
         </Card>
       ) : null}
 
-      {step === "ready" || step === "listening" ? (
+      {capturing && (voice.step === "ready" || voice.step === "listening") ? (
         <Card className="flex flex-col items-center gap-4 py-8">
           <div className="text-base font-semibold">
-            {step === "listening" ? "Aufnahme läuft…" : "Bereit zum Sprechen"}
+            {voice.step === "listening" ? "Aufnahme läuft…" : "Bereit zum Sprechen"}
           </div>
           <button
             type="button"
             onClick={toggleListening}
-            disabled={step !== "ready" && step !== "listening"}
             className={[
               "h-24 w-24 flex items-center justify-center rounded-full",
               micButtonClass,
-              step === "listening" ? "animate-pulse" : "",
+              voice.step === "listening" ? "animate-pulse" : "",
             ].join(" ")}
-            aria-label={step === "listening" ? "Aufnahme stoppen" : "Aufnahme starten"}
-            aria-pressed={step === "listening"}
+            aria-label={voice.step === "listening" ? "Aufnahme stoppen" : "Aufnahme starten"}
+            aria-pressed={voice.step === "listening"}
           >
             <Mic className="h-10 w-10" aria-hidden="true" />
           </button>
           <div className="text-sm text-[var(--muted)] text-center">
-            {step === "listening"
+            {voice.step === "listening"
               ? "Nochmal tippen, wenn du fertig bist."
               : "Tippen zum Starten. Nochmal tippen zum Beenden."}
           </div>
-          {step === "listening" ? (
-            <div className="text-2xl font-bold tabular-nums text-[var(--accent)]">
-              {formatRecordingDuration(recordingSeconds)}
-            </div>
+          {voice.step === "listening" && voice.liveText ? (
+            <div className="w-full rounded-[var(--radius)] bg-[var(--background)] p-3 text-sm">{voice.liveText}</div>
           ) : null}
-          {!recordingSupport.supported ? (
+          {!voice.support.supported ? (
             <div className="text-sm text-[var(--muted)] text-center">
-              Dein Browser unterstützt keine Audioaufnahme.
+              Dein Browser unterstützt keine Spracherkennung.
             </div>
           ) : null}
         </Card>
       ) : null}
 
-      {step === "processing" ? (
+      {capturing && voice.step === "processing" ? (
         <Card className="flex flex-col gap-3">
-          <div className="font-semibold">Sprache wird erkannt…</div>
+          <div className="font-semibold">Text wird verarbeitet…</div>
           <div className="text-sm opacity-80">
-            Bitte kurz warten – deine Aufnahme wird in Text umgewandelt.
+            Bitte kurz warten – der letzte Teil deiner Sprache wird noch erfasst.
           </div>
+          {voice.liveText ? (
+            <div className="rounded-[var(--radius)] bg-[var(--background)] p-3">{voice.liveText}</div>
+          ) : (
+            <div className="rounded-[var(--radius)] bg-[var(--background)] p-3 text-[var(--muted)]">…</div>
+          )}
         </Card>
       ) : null}
 
-      {step === "transcript" ? (
+      {postStep === "transcript" ? (
         <Card className="flex flex-col gap-3">
           <div className="font-semibold">Stimmt das so?</div>
-          <div className="rounded-[var(--radius)] bg-[var(--background)] p-3">{transcript}</div>
+          <div className="rounded-[var(--radius)] bg-[var(--background)] p-3">{voice.transcript}</div>
           <div className="grid grid-cols-1 gap-2">
             <Button variant="primary" onClick={parseTranscript} disabled={parsing}>
               <Check className="h-5 w-5" aria-hidden="true" />
@@ -448,7 +345,7 @@ export default function SprechenPage() {
         </Card>
       ) : null}
 
-      {step === "review" ? (
+      {postStep === "review" ? (
         <div className="flex flex-col gap-3">
           <Card className="flex flex-col gap-2">
             <div className="font-semibold">{drafts.length} Einträge erkannt</div>
@@ -475,7 +372,7 @@ export default function SprechenPage() {
               <Save className="h-5 w-5" aria-hidden="true" />
               Speichere alle {drafts.length} Einträge
             </Button>
-            <Button variant="outline" onClick={() => setStep("transcript")} disabled={saving}>
+            <Button variant="outline" onClick={() => setPostStep("transcript")} disabled={saving}>
               <PencilLine className="h-5 w-5" aria-hidden="true" />
               Zurück zum Text
             </Button>
@@ -483,7 +380,7 @@ export default function SprechenPage() {
         </div>
       ) : null}
 
-      {step === "parsed" && activeDraft ? (
+      {postStep === "parsed" && activeDraft ? (
         <div className="flex flex-col gap-3">
           <Card className="flex flex-col gap-3">
             <div className="font-semibold">
@@ -570,12 +467,12 @@ export default function SprechenPage() {
               {drafts.length > 1 ? "Diesen Eintrag speichern" : "Speichern"}
             </Button>
             {drafts.length > 1 ? (
-              <Button variant="outline" onClick={() => setStep("review")} disabled={saving}>
+              <Button variant="outline" onClick={() => setPostStep("review")} disabled={saving}>
                 <ChevronRight className="h-5 w-5 rotate-180" aria-hidden="true" />
                 Zurück zur Übersicht
               </Button>
             ) : (
-              <Button variant="outline" onClick={() => setStep("transcript")} disabled={saving}>
+              <Button variant="outline" onClick={() => setPostStep("transcript")} disabled={saving}>
                 <PencilLine className="h-5 w-5" aria-hidden="true" />
                 Korrigieren
               </Button>
@@ -584,7 +481,7 @@ export default function SprechenPage() {
         </div>
       ) : null}
 
-      {step === "saved" ? (
+      {postStep === "saved" ? (
         <Card className="flex flex-col gap-3">
           <div className="font-semibold">Gespeichert</div>
           <div className="opacity-80">

@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Button, Card, DateInput, Input, OptionButton, Textarea } from "@/components/ui";
+import { Mic } from "lucide-react";
+import { Button, Card, DateInput, IconButton, Input, OptionButton, Textarea } from "@/components/ui";
+import { VoiceReplaceEntry, type VoiceReplaceValues } from "@/components/voice-replace-entry";
 import type { Category, Entry } from "@/lib/types";
 import { deleteEntry, getEntry, upsertEntry } from "@/lib/db";
 import { calcHours, formatGermanDate } from "@/lib/time";
@@ -36,6 +38,7 @@ export default function EntryDetailPage() {
   const [name, setName] = useState("");
   const [notes, setNotes] = useState("");
   const [reminders, setReminders] = useState("");
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +113,17 @@ export default function EntryDetailPage() {
     }
   }
 
+  function applyVoiceValues(values: VoiceReplaceValues) {
+    setDate(values.date);
+    setStartTime(values.startTime);
+    setEndTime(values.endTime);
+    setCategories(values.categories);
+    setName(values.name);
+    setNotes(values.notes);
+    setReminders(values.reminders);
+    setError(null);
+  }
+
   async function onDelete() {
     if (!entry) return;
     const ok = window.confirm("Diesen Eintrag wirklich löschen?");
@@ -146,10 +160,17 @@ export default function EntryDetailPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <div className="text-lg font-semibold">Eintrag bearbeiten</div>
-        <div className="text-sm opacity-80">{formatGermanDate(entry.date)}</div>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-lg font-semibold">Eintrag bearbeiten</div>
+          <div className="text-sm opacity-80">{formatGermanDate(entry.date)}</div>
+        </div>
+        <IconButton onClick={() => setVoiceOpen(true)} aria-label="Per Sprache korrigieren">
+          <Mic className="h-5 w-5" aria-hidden="true" />
+        </IconButton>
       </div>
+
+      <VoiceReplaceEntry open={voiceOpen} onClose={() => setVoiceOpen(false)} onApply={applyVoiceValues} />
 
       {error ? (
         <Card className="border-red-600">

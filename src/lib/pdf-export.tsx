@@ -35,6 +35,7 @@ export async function buildEntriesPdfBlob(input: {
   entries: Entry[];
   totalHours: number;
   showNotes?: boolean;
+  employeeName?: string;
 }): Promise<Blob> {
   const showNotes = input.showNotes ?? true;
   const [{ pdf }, { EntriesPdfDoc }] = await Promise.all([
@@ -52,6 +53,7 @@ export async function buildEntriesPdfBlob(input: {
       entries={sorted}
       totalHours={input.totalHours}
       showNotes={showNotes}
+      employeeName={input.employeeName}
     />
   );
 

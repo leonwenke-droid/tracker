@@ -10,27 +10,35 @@ type PreferencesContextValue = {
   setFontSize: (v: FontSizeSetting) => void;
   theme: ThemeSetting;
   setTheme: (v: ThemeSetting) => void;
+  employeeName: string;
+  setEmployeeName: (v: string) => void;
 };
 
 const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 
 const STORAGE_KEY = "tracker.preferences.v1";
 
-function loadInitialPreferences(): { fontSize: FontSizeSetting; theme: ThemeSetting } {
-  if (typeof window === "undefined") return { fontSize: "normal", theme: "light" };
+function loadInitialPreferences(): {
+  fontSize: FontSizeSetting;
+  theme: ThemeSetting;
+  employeeName: string;
+} {
+  if (typeof window === "undefined") return { fontSize: "normal", theme: "light", employeeName: "" };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { fontSize: "normal", theme: "light" };
+    if (!raw) return { fontSize: "normal", theme: "light", employeeName: "" };
     const parsed = JSON.parse(raw) as Partial<{
       fontSize: FontSizeSetting;
       theme: ThemeSetting;
+      employeeName: string;
     }>;
     return {
       fontSize: parsed.fontSize ?? "normal",
       theme: parsed.theme ?? "light",
+      employeeName: typeof parsed.employeeName === "string" ? parsed.employeeName : "",
     };
   } catch {
-    return { fontSize: "normal", theme: "light" };
+    return { fontSize: "normal", theme: "light", employeeName: "" };
   }
 }
 
@@ -56,14 +64,15 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
   const initial = useMemo(() => loadInitialPreferences(), []);
   const [fontSize, setFontSize] = useState<FontSizeSetting>(initial.fontSize);
   const [theme, setTheme] = useState<ThemeSetting>(initial.theme);
+  const [employeeName, setEmployeeName] = useState(initial.employeeName);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ fontSize, theme }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ fontSize, theme, employeeName }));
     } catch {
       // ignore
     }
-  }, [fontSize, theme]);
+  }, [fontSize, theme, employeeName]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -80,8 +89,8 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
   }, [fontSize, theme]);
 
   const value = useMemo(
-    () => ({ fontSize, setFontSize, theme, setTheme }),
-    [fontSize, theme],
+    () => ({ fontSize, setFontSize, theme, setTheme, employeeName, setEmployeeName }),
+    [fontSize, theme, employeeName],
   );
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;

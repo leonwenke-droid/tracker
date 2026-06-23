@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, Trash2 } from "lucide-react";
-import { Button, Card, OptionButton, SectionTitle } from "@/components/ui";
+import { Button, Card, Input, OptionButton, SectionTitle } from "@/components/ui";
 import { usePreferences } from "@/context/preferences-context";
 import { clearAll, exportAllEntries } from "@/lib/db";
 
@@ -16,7 +16,7 @@ function downloadJson(obj: unknown, filename: string) {
 }
 
 export default function SettingsPage() {
-  const { fontSize, setFontSize, theme, setTheme } = usePreferences();
+  const { fontSize, setFontSize, theme, setTheme, employeeName, setEmployeeName } = usePreferences();
 
   async function backup() {
     const entries = await exportAllEntries();
@@ -33,6 +33,19 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-4">
       <SectionTitle>Einstellungen</SectionTitle>
+
+      <Card className="flex flex-col gap-3">
+        <div className="font-semibold">Mitarbeiter/in</div>
+        <div className="text-sm text-[var(--muted)]">
+          Erscheint auf dem PDF-Export. Wichtig, wenn mehrere Personen dasselbe Gerät nutzen.
+        </div>
+        <Input
+          label="Name"
+          value={employeeName}
+          onChange={setEmployeeName}
+          placeholder="z.B. Maria Schmidt"
+        />
+      </Card>
 
       <Card className="flex flex-col gap-3">
         <div className="font-semibold">Schriftgröße</div>

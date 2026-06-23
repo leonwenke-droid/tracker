@@ -5,7 +5,8 @@ import { formatGermanDateShort } from "@/lib/time";
 
 const styles = StyleSheet.create({
   page: { padding: 24, fontSize: 10, fontFamily: "Helvetica" },
-  title: { fontSize: 16, marginBottom: 12 },
+  title: { fontSize: 16, marginBottom: 4 },
+  subtitle: { fontSize: 11, marginBottom: 12, color: "#444" },
   tableHeader: { flexDirection: "row", borderBottomWidth: 1, paddingBottom: 6, marginBottom: 6 },
   row: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#ddd", paddingVertical: 4 },
   cellDate: { width: "14%" },
@@ -27,16 +28,21 @@ export function EntriesPdfDoc({
   entries,
   totalHours,
   showNotes = true,
+  employeeName,
 }: {
   monthLabel: string;
   entries: Entry[];
   totalHours: number;
   showNotes?: boolean;
+  employeeName?: string;
 }) {
   return (
     <Document>
       <Page size="A4" style={styles.page}>
         <Text style={styles.title}>Zeiterfassung – Export {monthLabel}</Text>
+        {employeeName ? (
+          <Text style={styles.subtitle}>Mitarbeiter/in: {employeeName}</Text>
+        ) : null}
 
         <View style={styles.tableHeader}>
           <Text style={[styles.cellDate, styles.bold]}>Datum</Text>

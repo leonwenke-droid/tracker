@@ -1,8 +1,9 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Download, Share2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Download, Share2 } from "lucide-react";
 import { Button, Card, IconButton, ListCard, OptionButton, SectionTitle } from "@/components/ui";
+import { usePreferences } from "@/context/preferences-context";
 import type { Category, Entry } from "@/lib/types";
 import { listEntries } from "@/lib/db";
 import { countByTask, entriesForMonth, monthLabelDE, sumHours } from "@/lib/month";
@@ -18,6 +19,7 @@ function categoryLabel(c: Category) {
 }
 
 export default function ExportPage() {
+  const { employeeName } = usePreferences();
   const [entries, setEntries] = useState<Entry[]>([]);
   const [busy, setBusy] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
@@ -44,7 +46,14 @@ export default function ExportPage() {
   );
 
   async function createPdfBlob() {
-    return buildEntriesPdfBlob({ monthLabel, entries: monthEntries, totalHours, showNotes });
+    const trimmedName = employeeName.trim();
+    return buildEntriesPdfBlob({
+      monthLabel,
+      entries: monthEntries,
+      totalHours,
+      showNotes,
+      employeeName: trimmedName || undefined,
+    });
   }
 
   function prevMonth() {
