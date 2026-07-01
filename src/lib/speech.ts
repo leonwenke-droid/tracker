@@ -28,9 +28,9 @@ export function createSpeechRecognition(lang = "de-DE"): SpeechRecognition | nul
   if (!Ctor) return null;
   const rec: SpeechRecognition = new Ctor();
   rec.lang = lang;
-  rec.interimResults = false;
+  rec.interimResults = true;
   rec.maxAlternatives = 1;
-  rec.continuous = false;
+  rec.continuous = true;
   return rec;
 }
 

@@ -1,13 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { startMicKeepalive, stopMicKeepalive } from "@/lib/mic-keepalive";
 import { createSpeechRecognition, getSpeechSupport } from "@/lib/speech";
 
 export type VoiceCaptureStep = "ready" | "listening" | "processing" | "done";
 
-const FINALIZE_DELAY_MS = 900;
-const FINALIZE_MAX_WAIT_MS = 3500;
+const FINALIZE_DELAY_MS = 400;
 
 /** Append a speech segment without duplicating overlapping prefix (Chrome cumulative finals). */
 function appendWithOverlap(accumulated: string, segment: string): string {
@@ -60,12 +58,10 @@ export function useVoiceCapture() {
   const recRef = useRef<SpeechRecognition | null>(null);
   const transcriptRef = useRef("");
   const baseTranscriptRef = useRef("");
-  const listeningActiveRef = useRef(false);
+  const listeningRef = useRef(false);
   const stoppingRef = useRef(false);
   const finalizeTimerRef = useRef<number | null>(null);
-  const finalizeDeadlineRef = useRef(0);
   const restartAttemptsRef = useRef(0);
-  const chainNextRef = useRef<() => void>(() => {});
 
   const [step, setStep] = useState<VoiceCaptureStep>("ready");
   const [liveText, setLiveText] = useState("");
@@ -79,16 +75,11 @@ export function useVoiceCapture() {
     }
   }, []);
 
-  const releaseMic = useCallback(() => {
-    stopMicKeepalive();
-  }, []);
-
   const finalizeTranscript = useCallback(() => {
     clearFinalizeTimer();
     stoppingRef.current = false;
-    listeningActiveRef.current = false;
+    listeningRef.current = false;
     restartAttemptsRef.current = 0;
-    releaseMic();
     const finalText = transcriptRef.current.trim();
     setLiveText("");
     if (!finalText) {
@@ -98,135 +89,53 @@ export function useVoiceCapture() {
     }
     setTranscript(finalText);
     setStep("done");
-  }, [clearFinalizeTimer, releaseMic]);
-
-  const safetyNetAfterRestartFailure = useCallback(() => {
-    listeningActiveRef.current = false;
-    restartAttemptsRef.current = 0;
-    releaseMic();
-    const text = transcriptRef.current.trim();
-    if (text) {
-      stoppingRef.current = true;
-      finalizeDeadlineRef.current = Date.now();
-      setStep("processing");
-      finalizeTranscript();
-    } else {
-      setStep("ready");
-    }
-  }, [finalizeTranscript, releaseMic]);
+  }, [clearFinalizeTimer]);
 
   const scheduleFinalize = useCallback(() => {
     clearFinalizeTimer();
-    const now = Date.now();
-    const deadline = finalizeDeadlineRef.current;
-    if (now >= deadline) {
-      finalizeTranscript();
-      return;
-    }
-    const delay = Math.min(FINALIZE_DELAY_MS, deadline - now);
     finalizeTimerRef.current = window.setTimeout(() => {
       finalizeTimerRef.current = null;
       finalizeTranscript();
-    }, delay);
+    }, FINALIZE_DELAY_MS);
   }, [clearFinalizeTimer, finalizeTranscript]);
 
-  const attachRecognition = useCallback(
+  const restartRecognition = useCallback(
     (rec: SpeechRecognition) => {
-      rec.continuous = true;
-      rec.interimResults = true;
+      if (!listeningRef.current || stoppingRef.current) return;
+      baseTranscriptRef.current = transcriptRef.current;
 
-      rec.onresult = (event: SpeechRecognitionEvent) => {
-        const sessionText = transcriptFromResults(event.results);
-        const combined = baseTranscriptRef.current
-          ? appendWithOverlap(baseTranscriptRef.current, sessionText)
-          : sessionText;
-        transcriptRef.current = combined;
-        setLiveText(combined);
-        if (stoppingRef.current) scheduleFinalize();
+      const attempt = () => {
+        if (!listeningRef.current || stoppingRef.current) return;
+        try {
+          rec.start();
+          restartAttemptsRef.current = 0;
+        } catch {
+          restartAttemptsRef.current += 1;
+          if (restartAttemptsRef.current < 4) {
+            window.setTimeout(attempt, 150);
+            return;
+          }
+          listeningRef.current = false;
+          const text = transcriptRef.current.trim();
+          if (text) {
+            stoppingRef.current = true;
+            setStep("processing");
+            finalizeTranscript();
+          } else {
+            setStep("ready");
+          }
+        }
       };
 
-      rec.onerror = (event: SpeechRecognitionErrorEvent) => {
-        const code = String(event.error ?? "");
-        if (stoppingRef.current && code === "no-speech") {
-          scheduleFinalize();
-          return;
-        }
-        if (!stoppingRef.current && (code === "no-speech" || code === "network")) {
-          chainNextRef.current();
-          return;
-        }
-        clearFinalizeTimer();
-        stoppingRef.current = false;
-        listeningActiveRef.current = false;
-        releaseMic();
-        if (code === "not-allowed" || code === "service-not-allowed") {
-          setError("Mikrofon-Zugriff abgelehnt. Bitte erlaube das Mikrofon in den Browser-Einstellungen.");
-        } else if (code === "no-speech") {
-          setError("Keine Sprache erkannt. Bitte sprich etwas lauter oder näher am Mikrofon.");
-        } else if (code === "audio-capture") {
-          setError("Kein Mikrofon gefunden. Bitte prüfe dein Gerät.");
-        } else if (code !== "aborted") {
-          setError("Spracherkennung fehlgeschlagen. Bitte versuche es erneut oder nutze „Manuell eintragen“.");
-        }
-        setStep("ready");
-      };
-
-      rec.onend = () => {
-        if (recRef.current !== rec) return;
-        if (stoppingRef.current) {
-          scheduleFinalize();
-          return;
-        }
-        if (listeningActiveRef.current) {
-          chainNextRef.current();
-          return;
-        }
-        setStep((s) => (s === "listening" ? "ready" : s));
-      };
+      window.setTimeout(attempt, 50);
     },
-    [clearFinalizeTimer, releaseMic, scheduleFinalize],
+    [finalizeTranscript],
   );
-
-  const startRecognitionSession = useCallback(() => {
-    if (!listeningActiveRef.current || stoppingRef.current) return;
-
-    const rec = createSpeechRecognition("de-DE");
-    if (!rec) {
-      safetyNetAfterRestartFailure();
-      return;
-    }
-
-    attachRecognition(rec);
-    recRef.current = rec;
-
-    const attemptStart = () => {
-      if (!listeningActiveRef.current || stoppingRef.current) return;
-      try {
-        rec.start();
-        restartAttemptsRef.current = 0;
-      } catch {
-        restartAttemptsRef.current += 1;
-        if (restartAttemptsRef.current < 6) {
-          window.setTimeout(attemptStart, 30);
-          return;
-        }
-        safetyNetAfterRestartFailure();
-      }
-    };
-
-    attemptStart();
-  }, [attachRecognition, safetyNetAfterRestartFailure]);
-
-  chainNextRef.current = () => {
-    if (!listeningActiveRef.current || stoppingRef.current) return;
-    baseTranscriptRef.current = transcriptRef.current;
-    startRecognitionSession();
-  };
 
   const reset = useCallback(() => {
     clearFinalizeTimer();
     stoppingRef.current = false;
-    listeningActiveRef.current = false;
+    listeningRef.current = false;
     restartAttemptsRef.current = 0;
     transcriptRef.current = "";
     baseTranscriptRef.current = "";
@@ -234,14 +143,13 @@ export function useVoiceCapture() {
     setTranscript("");
     setError(null);
     setStep("ready");
-    releaseMic();
     try {
       recRef.current?.abort();
     } catch {
       // ignore
     }
     recRef.current = null;
-  }, [clearFinalizeTimer, releaseMic]);
+  }, [clearFinalizeTimer]);
 
   const start = useCallback(() => {
     setError(null);
@@ -249,51 +157,102 @@ export function useVoiceCapture() {
       setError("Dein Browser unterstützt keine Spracherkennung. Bitte nutze „Manuell eintragen“.");
       return;
     }
+    const rec = createSpeechRecognition("de-DE");
+    if (!rec) {
+      setError("Spracherkennung ist nicht verfügbar. Bitte nutze „Manuell eintragen“.");
+      return;
+    }
 
+    rec.continuous = true;
+    rec.interimResults = true;
     stoppingRef.current = false;
-    listeningActiveRef.current = true;
+    listeningRef.current = true;
     restartAttemptsRef.current = 0;
     transcriptRef.current = "";
     baseTranscriptRef.current = "";
     setLiveText("");
     setTranscript("");
-    recRef.current = null;
+    recRef.current = rec;
     setStep("listening");
 
-    void startMicKeepalive()
-      .catch(() => {
-        // keepalive is best-effort; recognition may still work
-      })
-      .finally(() => {
-        if (!listeningActiveRef.current || stoppingRef.current) return;
-        startRecognitionSession();
-      });
-  }, [startRecognitionSession, support.supported]);
+    rec.onresult = (event: SpeechRecognitionEvent) => {
+      const sessionText = transcriptFromResults(event.results);
+      const combined = baseTranscriptRef.current
+        ? appendWithOverlap(baseTranscriptRef.current, sessionText)
+        : sessionText;
+      transcriptRef.current = combined;
+      setLiveText(combined);
+      if (stoppingRef.current) scheduleFinalize();
+    };
+
+    rec.onerror = (event: SpeechRecognitionErrorEvent) => {
+      const code = String(event.error ?? "");
+      if (stoppingRef.current && code === "no-speech") {
+        scheduleFinalize();
+        return;
+      }
+      if (!stoppingRef.current && (code === "no-speech" || code === "network")) {
+        restartRecognition(rec);
+        return;
+      }
+      clearFinalizeTimer();
+      stoppingRef.current = false;
+      listeningRef.current = false;
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        setError("Mikrofon-Zugriff abgelehnt. Bitte erlaube das Mikrofon in den Browser-Einstellungen.");
+      } else if (code === "no-speech") {
+        setError("Keine Sprache erkannt. Bitte sprich etwas lauter oder näher am Mikrofon.");
+      } else if (code === "audio-capture") {
+        setError("Kein Mikrofon gefunden. Bitte prüfe dein Gerät.");
+      } else if (code !== "aborted") {
+        setError("Spracherkennung fehlgeschlagen. Bitte versuche es erneut oder nutze „Manuell eintragen“.");
+      }
+      setStep("ready");
+    };
+
+    rec.onend = () => {
+      if (stoppingRef.current) {
+        scheduleFinalize();
+        return;
+      }
+      if (listeningRef.current) {
+        restartRecognition(rec);
+        return;
+      }
+      setStep((s) => (s === "listening" ? "ready" : s));
+    };
+
+    try {
+      rec.start();
+    } catch {
+      listeningRef.current = false;
+      setError("Konnte Spracherkennung nicht starten. Bitte nutze „Manuell eintragen“.");
+      setStep("ready");
+    }
+  }, [clearFinalizeTimer, restartRecognition, scheduleFinalize, support.supported]);
 
   const stop = useCallback(() => {
-    if (stoppingRef.current) return;
+    if (stoppingRef.current || !listeningRef.current) return;
     stoppingRef.current = true;
-    finalizeDeadlineRef.current = Date.now() + FINALIZE_MAX_WAIT_MS;
+    listeningRef.current = false;
     setStep("processing");
     try {
       recRef.current?.stop();
     } catch {
-      // ignore
+      scheduleFinalize();
     }
-    scheduleFinalize();
   }, [scheduleFinalize]);
 
   useEffect(() => {
     return () => {
       clearFinalizeTimer();
-      releaseMic();
       try {
         recRef.current?.abort();
       } catch {
         // ignore
       }
     };
-  }, [clearFinalizeTimer, releaseMic]);
+  }, [clearFinalizeTimer]);
 
   return {
     support: { supported: support.supported },
