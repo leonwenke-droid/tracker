@@ -104,6 +104,20 @@ export async function exportAllEntries(): Promise<Entry[]> {
   return listEntries();
 }
 
+export async function importEntries(
+  entries: Entry[],
+): Promise<{ added: number; updated: number }> {
+  const db = await getDB();
+  const existingIds = new Set(await db.getAllKeys("entries"));
+  const tx = db.transaction("entries", "readwrite");
+
+  await Promise.all(entries.map((entry) => tx.store.put(entry)));
+  await tx.done;
+
+  const updated = entries.filter((entry) => existingIds.has(entry.id)).length;
+  return { added: entries.length - updated, updated };
+}
+
 export async function getMeta(key: string): Promise<string | null> {
   const db = await getDB();
   const row = await db.get("meta", key);
