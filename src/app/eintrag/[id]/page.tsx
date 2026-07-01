@@ -22,6 +22,13 @@ function formatHoursDE(h: number) {
   return h.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 }
 
+function homeHref() {
+  const returnMonth = new URLSearchParams(window.location.search).get("returnMonth");
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(returnMonth ?? "")
+    ? `/?month=${returnMonth}`
+    : "/";
+}
+
 export default function EntryDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -105,7 +112,7 @@ export default function EntryDetailPage() {
         notes: notes.trim(),
         reminders: reminders.trim(),
       });
-      router.push("/");
+      router.push(homeHref());
     } catch {
       setError("Speichern fehlgeschlagen.");
     } finally {
@@ -132,7 +139,7 @@ export default function EntryDetailPage() {
     setError(null);
     try {
       await deleteEntry(entry.id);
-      router.push("/");
+      router.push(homeHref());
     } catch {
       setError("Löschen fehlgeschlagen.");
     } finally {

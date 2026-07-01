@@ -284,18 +284,24 @@ export function OptionButton({
 export function IconButton({
   children,
   onClick,
+  disabled,
   "aria-label": ariaLabel,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
+  disabled?: boolean;
   "aria-label": string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-label={ariaLabel}
-      className="flex items-center justify-center rounded-[var(--radius)] bg-[var(--card)] border border-[var(--divider)] text-[var(--foreground)]"
+      className={[
+        "flex items-center justify-center rounded-[var(--radius)] bg-[var(--card)] border border-[var(--divider)] text-[var(--foreground)]",
+        disabled ? "opacity-40 cursor-not-allowed" : "",
+      ].join(" ")}
       style={tapMinSquareStyle}
     >
       {children}
