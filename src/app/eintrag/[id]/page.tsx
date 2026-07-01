@@ -106,7 +106,6 @@ export default function EntryDetailPage() {
         reminders: reminders.trim(),
       });
       router.push("/");
-      router.refresh();
     } catch {
       setError("Speichern fehlgeschlagen.");
     } finally {
@@ -134,7 +133,6 @@ export default function EntryDetailPage() {
     try {
       await deleteEntry(entry.id);
       router.push("/");
-      router.refresh();
     } catch {
       setError("Löschen fehlgeschlagen.");
     } finally {

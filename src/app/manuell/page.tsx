@@ -67,7 +67,6 @@ export default function ManualEntryPage() {
         threshold: 3,
       });
       router.push("/");
-      router.refresh();
     } catch {
       setError("Speichern fehlgeschlagen.");
     } finally {
