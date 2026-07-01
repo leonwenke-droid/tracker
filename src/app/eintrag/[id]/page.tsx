@@ -12,6 +12,7 @@ import { calcHours, formatGermanDate } from "@/lib/time";
 const CATEGORIES: { value: Category; label: string }[] = [
   { value: "Beerdigung", label: "Beerdigung" },
   { value: "Aufbahrung", label: "Aufbahrung" },
+  { value: "Einsargung", label: "Einsargung" },
   { value: "Krematorium", label: "Krematorium" },
   { value: "Fahrdienst", label: "Fahrdienst" },
   { value: "Sonstiges", label: "Sonstiges" },
@@ -165,12 +166,25 @@ export default function EntryDetailPage() {
           <div className="text-lg font-semibold">Eintrag bearbeiten</div>
           <div className="text-sm opacity-80">{formatGermanDate(entry.date)}</div>
         </div>
-        <IconButton onClick={() => setVoiceOpen(true)} aria-label="Per Sprache korrigieren">
+        <IconButton onClick={() => setVoiceOpen(true)} aria-label="Per Sprache ergänzen">
           <Mic className="h-5 w-5" aria-hidden="true" />
         </IconButton>
       </div>
 
-      <VoiceReplaceEntry open={voiceOpen} onClose={() => setVoiceOpen(false)} onApply={applyVoiceValues} />
+      <VoiceReplaceEntry
+        open={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        onApply={applyVoiceValues}
+        existingValues={{
+          date,
+          startTime,
+          endTime,
+          categories,
+          name,
+          notes,
+          reminders,
+        }}
+      />
 
       {error ? (
         <Card className="border-red-600">

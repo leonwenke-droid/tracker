@@ -28,6 +28,7 @@ type DraftEntry = {
 const CATEGORIES: { value: Category; label: string }[] = [
   { value: "Beerdigung", label: "Beerdigung" },
   { value: "Aufbahrung", label: "Aufbahrung" },
+  { value: "Einsargung", label: "Einsargung" },
   { value: "Krematorium", label: "Krematorium" },
   { value: "Fahrdienst", label: "Fahrdienst" },
   { value: "Sonstiges", label: "Sonstiges" },

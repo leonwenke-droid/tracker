@@ -14,6 +14,7 @@ export function countByTask(entries: Entry[]) {
   const counts: Record<Category, number> = {
     Beerdigung: 0,
     Aufbahrung: 0,
+    Einsargung: 0,
     Krematorium: 0,
     Fahrdienst: 0,
     Sonstiges: 0,

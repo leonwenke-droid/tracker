@@ -17,6 +17,7 @@ type StatsMap = Record<string, Record<Category, number>>;
 const CATEGORIES: Category[] = [
   "Beerdigung",
   "Aufbahrung",
+  "Einsargung",
   "Krematorium",
   "Fahrdienst",
   "Sonstiges",

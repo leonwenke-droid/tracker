@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startMicKeepalive, stopMicKeepalive } from "@/lib/mic-keepalive";
 import { createSpeechRecognition, getSpeechSupport } from "@/lib/speech";
 
 export type VoiceCaptureStep = "ready" | "listening" | "processing" | "done";
@@ -64,6 +65,7 @@ export function useVoiceCapture() {
   const finalizeTimerRef = useRef<number | null>(null);
   const finalizeDeadlineRef = useRef(0);
   const restartAttemptsRef = useRef(0);
+  const chainNextRef = useRef<() => void>(() => {});
 
   const [step, setStep] = useState<VoiceCaptureStep>("ready");
   const [liveText, setLiveText] = useState("");
@@ -77,11 +79,16 @@ export function useVoiceCapture() {
     }
   }, []);
 
+  const releaseMic = useCallback(() => {
+    stopMicKeepalive();
+  }, []);
+
   const finalizeTranscript = useCallback(() => {
     clearFinalizeTimer();
     stoppingRef.current = false;
     listeningActiveRef.current = false;
     restartAttemptsRef.current = 0;
+    releaseMic();
     const finalText = transcriptRef.current.trim();
     setLiveText("");
     if (!finalText) {
@@ -91,11 +98,12 @@ export function useVoiceCapture() {
     }
     setTranscript(finalText);
     setStep("done");
-  }, [clearFinalizeTimer]);
+  }, [clearFinalizeTimer, releaseMic]);
 
   const safetyNetAfterRestartFailure = useCallback(() => {
     listeningActiveRef.current = false;
     restartAttemptsRef.current = 0;
+    releaseMic();
     const text = transcriptRef.current.trim();
     if (text) {
       stoppingRef.current = true;
@@ -105,7 +113,7 @@ export function useVoiceCapture() {
     } else {
       setStep("ready");
     }
-  }, [finalizeTranscript]);
+  }, [finalizeTranscript, releaseMic]);
 
   const scheduleFinalize = useCallback(() => {
     clearFinalizeTimer();
@@ -122,30 +130,98 @@ export function useVoiceCapture() {
     }, delay);
   }, [clearFinalizeTimer, finalizeTranscript]);
 
-  const restartRecognition = useCallback(
+  const attachRecognition = useCallback(
     (rec: SpeechRecognition) => {
-      if (!listeningActiveRef.current || stoppingRef.current) return;
-      baseTranscriptRef.current = transcriptRef.current;
+      rec.continuous = true;
+      rec.interimResults = true;
 
-      const attempt = () => {
-        if (!listeningActiveRef.current || stoppingRef.current) return;
-        try {
-          rec.start();
-          restartAttemptsRef.current = 0;
-        } catch {
-          restartAttemptsRef.current += 1;
-          if (restartAttemptsRef.current < 4) {
-            window.setTimeout(attempt, 150);
-            return;
-          }
-          safetyNetAfterRestartFailure();
-        }
+      rec.onresult = (event: SpeechRecognitionEvent) => {
+        const sessionText = transcriptFromResults(event.results);
+        const combined = baseTranscriptRef.current
+          ? appendWithOverlap(baseTranscriptRef.current, sessionText)
+          : sessionText;
+        transcriptRef.current = combined;
+        setLiveText(combined);
+        if (stoppingRef.current) scheduleFinalize();
       };
 
-      window.setTimeout(attempt, 50);
+      rec.onerror = (event: SpeechRecognitionErrorEvent) => {
+        const code = String(event.error ?? "");
+        if (stoppingRef.current && code === "no-speech") {
+          scheduleFinalize();
+          return;
+        }
+        if (!stoppingRef.current && (code === "no-speech" || code === "network")) {
+          chainNextRef.current();
+          return;
+        }
+        clearFinalizeTimer();
+        stoppingRef.current = false;
+        listeningActiveRef.current = false;
+        releaseMic();
+        if (code === "not-allowed" || code === "service-not-allowed") {
+          setError("Mikrofon-Zugriff abgelehnt. Bitte erlaube das Mikrofon in den Browser-Einstellungen.");
+        } else if (code === "no-speech") {
+          setError("Keine Sprache erkannt. Bitte sprich etwas lauter oder näher am Mikrofon.");
+        } else if (code === "audio-capture") {
+          setError("Kein Mikrofon gefunden. Bitte prüfe dein Gerät.");
+        } else if (code !== "aborted") {
+          setError("Spracherkennung fehlgeschlagen. Bitte versuche es erneut oder nutze „Manuell eintragen“.");
+        }
+        setStep("ready");
+      };
+
+      rec.onend = () => {
+        if (recRef.current !== rec) return;
+        if (stoppingRef.current) {
+          scheduleFinalize();
+          return;
+        }
+        if (listeningActiveRef.current) {
+          chainNextRef.current();
+          return;
+        }
+        setStep((s) => (s === "listening" ? "ready" : s));
+      };
     },
-    [safetyNetAfterRestartFailure],
+    [clearFinalizeTimer, releaseMic, scheduleFinalize],
   );
+
+  const startRecognitionSession = useCallback(() => {
+    if (!listeningActiveRef.current || stoppingRef.current) return;
+
+    const rec = createSpeechRecognition("de-DE");
+    if (!rec) {
+      safetyNetAfterRestartFailure();
+      return;
+    }
+
+    attachRecognition(rec);
+    recRef.current = rec;
+
+    const attemptStart = () => {
+      if (!listeningActiveRef.current || stoppingRef.current) return;
+      try {
+        rec.start();
+        restartAttemptsRef.current = 0;
+      } catch {
+        restartAttemptsRef.current += 1;
+        if (restartAttemptsRef.current < 6) {
+          window.setTimeout(attemptStart, 30);
+          return;
+        }
+        safetyNetAfterRestartFailure();
+      }
+    };
+
+    attemptStart();
+  }, [attachRecognition, safetyNetAfterRestartFailure]);
+
+  chainNextRef.current = () => {
+    if (!listeningActiveRef.current || stoppingRef.current) return;
+    baseTranscriptRef.current = transcriptRef.current;
+    startRecognitionSession();
+  };
 
   const reset = useCallback(() => {
     clearFinalizeTimer();
@@ -158,13 +234,14 @@ export function useVoiceCapture() {
     setTranscript("");
     setError(null);
     setStep("ready");
+    releaseMic();
     try {
       recRef.current?.abort();
     } catch {
       // ignore
     }
     recRef.current = null;
-  }, [clearFinalizeTimer]);
+  }, [clearFinalizeTimer, releaseMic]);
 
   const start = useCallback(() => {
     setError(null);
@@ -172,14 +249,7 @@ export function useVoiceCapture() {
       setError("Dein Browser unterstützt keine Spracherkennung. Bitte nutze „Manuell eintragen“.");
       return;
     }
-    const rec = createSpeechRecognition("de-DE");
-    if (!rec) {
-      setError("Spracherkennung ist nicht verfügbar. Bitte nutze „Manuell eintragen“.");
-      return;
-    }
 
-    rec.continuous = true;
-    rec.interimResults = true;
     stoppingRef.current = false;
     listeningActiveRef.current = true;
     restartAttemptsRef.current = 0;
@@ -187,64 +257,18 @@ export function useVoiceCapture() {
     baseTranscriptRef.current = "";
     setLiveText("");
     setTranscript("");
-    recRef.current = rec;
+    recRef.current = null;
     setStep("listening");
 
-    rec.onresult = (event: SpeechRecognitionEvent) => {
-      const sessionText = transcriptFromResults(event.results);
-      const combined = baseTranscriptRef.current
-        ? appendWithOverlap(baseTranscriptRef.current, sessionText)
-        : sessionText;
-      transcriptRef.current = combined;
-      setLiveText(combined);
-      if (stoppingRef.current) scheduleFinalize();
-    };
-
-    rec.onerror = (event: SpeechRecognitionErrorEvent) => {
-      const code = String(event.error ?? "");
-      if (stoppingRef.current && code === "no-speech") {
-        scheduleFinalize();
-        return;
-      }
-      if (!stoppingRef.current && (code === "no-speech" || code === "network")) {
-        restartRecognition(rec);
-        return;
-      }
-      clearFinalizeTimer();
-      stoppingRef.current = false;
-      listeningActiveRef.current = false;
-      if (code === "not-allowed" || code === "service-not-allowed") {
-        setError("Mikrofon-Zugriff abgelehnt. Bitte erlaube das Mikrofon in den Browser-Einstellungen.");
-      } else if (code === "no-speech") {
-        setError("Keine Sprache erkannt. Bitte sprich etwas lauter oder näher am Mikrofon.");
-      } else if (code === "audio-capture") {
-        setError("Kein Mikrofon gefunden. Bitte prüfe dein Gerät.");
-      } else if (code !== "aborted") {
-        setError("Spracherkennung fehlgeschlagen. Bitte versuche es erneut oder nutze „Manuell eintragen“.");
-      }
-      setStep("ready");
-    };
-
-    rec.onend = () => {
-      if (stoppingRef.current) {
-        scheduleFinalize();
-        return;
-      }
-      if (listeningActiveRef.current) {
-        restartRecognition(rec);
-        return;
-      }
-      setStep((s) => (s === "listening" ? "ready" : s));
-    };
-
-    try {
-      rec.start();
-    } catch {
-      listeningActiveRef.current = false;
-      setError("Konnte Spracherkennung nicht starten. Bitte nutze „Manuell eintragen“.");
-      setStep("ready");
-    }
-  }, [clearFinalizeTimer, restartRecognition, scheduleFinalize, support.supported]);
+    void startMicKeepalive()
+      .catch(() => {
+        // keepalive is best-effort; recognition may still work
+      })
+      .finally(() => {
+        if (!listeningActiveRef.current || stoppingRef.current) return;
+        startRecognitionSession();
+      });
+  }, [startRecognitionSession, support.supported]);
 
   const stop = useCallback(() => {
     if (stoppingRef.current) return;
@@ -262,13 +286,14 @@ export function useVoiceCapture() {
   useEffect(() => {
     return () => {
       clearFinalizeTimer();
+      releaseMic();
       try {
         recRef.current?.abort();
       } catch {
         // ignore
       }
     };
-  }, [clearFinalizeTimer]);
+  }, [clearFinalizeTimer, releaseMic]);
 
   return {
     support: { supported: support.supported },

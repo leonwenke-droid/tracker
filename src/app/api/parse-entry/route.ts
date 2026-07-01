@@ -3,10 +3,39 @@ import OpenAI from "openai";
 import { LOCATION_CORRECTION_PROMPT } from "@/lib/parse-entry-locations";
 import { inferCategoriesFromText } from "@/lib/parse-entry-categories";
 import { sanitizeTextFields } from "@/lib/parse-entry-sanitize";
-import type { ParsedEntry } from "@/lib/types";
+import type { Category, ParsedEntry } from "@/lib/types";
 import { calcHours, isoToGermanDate, parseGermanDate, toISODate } from "@/lib/time";
 
 export const runtime = "nodejs";
+
+export type ExistingEntryContext = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  categories: Category[];
+  name?: string;
+  notes?: string;
+  reminders?: string;
+};
+
+function mergeNotes(existing: string, parsed: string): string {
+  const prev = existing.trim();
+  const next = parsed.trim();
+  if (!next) return prev;
+  if (!prev) return next;
+  if (next.includes(prev) || prev.includes(next)) return next.length >= prev.length ? next : prev;
+  return `${prev} — ${next}`;
+}
+
+function mergeReminders(existing: string, parsed: string): string {
+  return mergeNotes(existing, parsed);
+}
+
+function mergeCategories(existing: Category[], parsed: Category[]): Category[] {
+  if (parsed.length === 0) return existing;
+  const merged = new Set<Category>([...existing, ...parsed]);
+  return [...merged];
+}
 
 function isoToday(): string {
   return toISODate(new Date());
@@ -58,6 +87,7 @@ function normalizeCategory(v: unknown): ParsedEntry["categories"][number] | null
   const map: Record<string, ParsedEntry["categories"][number]> = {
     Beerdigung: "Beerdigung",
     Aufbahrung: "Aufbahrung",
+    Einsargung: "Einsargung",
     Krematorium: "Krematorium",
     Fahrdienst: "Fahrdienst",
     Sonstiges: "Sonstiges",
@@ -67,10 +97,40 @@ function normalizeCategory(v: unknown): ParsedEntry["categories"][number] | null
   return map[v.trim()] ?? null;
 }
 
+function parseExistingEntry(body: unknown): ExistingEntryContext | null {
+  if (!body || typeof body !== "object") return null;
+  const raw = (body as { existingEntry?: unknown }).existingEntry;
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const date =
+    typeof o.date === "string"
+      ? (parseGermanDate(o.date.trim()) ?? (/^\d{4}-\d{2}-\d{2}$/.test(o.date.trim()) ? o.date.trim() : null))
+      : null;
+  const startTime = normalizeTime(o.startTime);
+  const endTime = normalizeTime(o.endTime);
+  if (!date || !startTime || !endTime) return null;
+  const catsRaw = o.categories;
+  const categories = Array.isArray(catsRaw)
+    ? catsRaw
+        .map(normalizeCategory)
+        .filter((x): x is Category => x !== null)
+    : [];
+  if (categories.length === 0) return null;
+  return {
+    date,
+    startTime,
+    endTime,
+    categories,
+    name: typeof o.name === "string" ? o.name.trim() : "",
+    notes: typeof o.notes === "string" ? o.notes.trim() : "",
+    reminders: typeof o.reminders === "string" ? o.reminders.trim() : "",
+  };
+}
+
 /** Fallback: Verstorbenenname aus Text, falls das Modell name leer lässt. */
 function extractDeceasedName(text: string): string {
   const patterns = [
-    /\b(?:Aufbahrung|Beerdigung|Verabschiedung)\s+(?:von|für)\s+((?:Frau|Herr)\s+[A-ZÄÖÜ][\wäöüß-]+)/i,
+    /\b(?:Aufbahrung|Einsargung|Beerdigung|Verabschiedung)\s+(?:von|für)\s+((?:Frau|Herr)\s+[A-ZÄÖÜ][\wäöüß-]+)/i,
     /\b((?:Frau|Herr)\s+[A-ZÄÖÜ][\wäöüß-]+)\b/,
     /\bVerstorbene[nr]?\s+([A-ZÄÖÜ][\wäöüß-]+)\b/i,
     /\b(?:Herrn?|Frau)\s+([A-ZÄÖÜ][\wäöüß-]+)\b/i,
@@ -95,14 +155,14 @@ function extractRawEntries(raw: unknown): unknown[] {
   return [];
 }
 
-function ensureCategories(obj: Record<string, unknown>, ...textParts: string[]): void {
+function ensureCategories(obj: Record<string, unknown>, textParts: string[], keepEmpty = false): void {
   const catsRaw = obj.categories;
   const categories = Array.isArray(catsRaw)
     ? catsRaw
         .map(normalizeCategory)
         .filter((x): x is ParsedEntry["categories"][number] => x !== null)
     : [];
-  if (categories.length === 0) {
+  if (categories.length === 0 && !keepEmpty) {
     const notes = typeof obj.notes === "string" ? obj.notes : "";
     const name = typeof obj.name === "string" ? obj.name : "";
     obj.categories = inferCategoriesFromText(...textParts, name, notes);
@@ -114,6 +174,7 @@ function validateEntry(
   transcript: string,
   today: string,
   index: number,
+  existing?: ExistingEntryContext | null,
 ): ParsedEntry | null {
   if (!obj || typeof obj !== "object") {
     console.error("[parse-entry] entry validation failed: not an object", { index, obj });
@@ -121,29 +182,37 @@ function validateEntry(
   }
 
   const o = obj as Record<string, unknown>;
-  ensureCategories(o, transcript);
+  ensureCategories(o, [transcript], !!existing);
 
   const rawDate = typeof o.date === "string" ? o.date.trim() : "";
   const parsedFromModel = rawDate ? parseGermanDate(rawDate) : null;
+  const fromTranscript = extractDateFromTranscript(transcript);
   let date: string;
-  if (parsedFromModel) {
+  if (existing && !fromTranscript) {
+    date = existing.date;
+  } else if (parsedFromModel) {
     date = parsedFromModel;
   } else if (rawDate) {
     console.error("[parse-entry] invalid date from model, trying transcript", {
       index,
       date: o.date,
     });
-    date = extractDateFromTranscript(transcript) ?? today;
+    date = fromTranscript ?? existing?.date ?? today;
+  } else if (fromTranscript) {
+    date = fromTranscript;
+  } else if (existing) {
+    date = existing.date;
   } else {
-    const fromTranscript = extractDateFromTranscript(transcript);
-    date = fromTranscript ?? today;
-    if (!fromTranscript) {
-      console.error("[parse-entry] missing date, falling back to today", { index, date: o.date });
-    }
+    date = today;
+    console.error("[parse-entry] missing date, falling back to today", { index, date: o.date });
   }
 
-  const startTime = normalizeTime(o.startTime);
-  const endTime = normalizeTime(o.endTime);
+  let startTime = normalizeTime(o.startTime);
+  let endTime = normalizeTime(o.endTime);
+  if (existing) {
+    if (!startTime) startTime = existing.startTime;
+    if (!endTime) endTime = existing.endTime;
+  }
   if (!startTime || !endTime) {
     console.error("[parse-entry] entry validation failed: invalid times", {
       index,
@@ -164,19 +233,30 @@ function validateEntry(
   }
 
   const catsRaw = o.categories;
-  const categories = Array.isArray(catsRaw)
+  let categories = Array.isArray(catsRaw)
     ? catsRaw
         .map(normalizeCategory)
         .filter((x): x is ParsedEntry["categories"][number] => x !== null)
     : [];
+  if (categories.length === 0 && existing) {
+    categories = [...existing.categories];
+  }
   if (categories.length === 0) {
     console.error("[parse-entry] entry validation failed: no categories", { index, catsRaw });
     return null;
   }
+  if (existing) {
+    categories = mergeCategories(existing.categories, categories);
+  }
 
-  const notes = typeof o.notes === "string" ? o.notes.trim() : "";
-  const name = typeof o.name === "string" ? o.name.trim() : "";
-  const reminders = typeof o.reminders === "string" ? o.reminders.trim() : "";
+  let notes = typeof o.notes === "string" ? o.notes.trim() : "";
+  let name = typeof o.name === "string" ? o.name.trim() : "";
+  let reminders = typeof o.reminders === "string" ? o.reminders.trim() : "";
+  if (existing) {
+    if (!name) name = existing.name ?? "";
+    notes = mergeNotes(existing.notes ?? "", notes);
+    reminders = mergeReminders(existing.reminders ?? "", reminders);
+  }
 
   const parsed: ParsedEntry = {
     date,
@@ -205,11 +285,73 @@ function validateEntry(
   return parsed;
 }
 
+function buildSupplementUserMessage(existing: ExistingEntryContext, transcript: string): string {
+  const lines = [
+    "BESTEHENDER EINTRAG (Basis — nur ändern, was im Transkript genannt wird):",
+    `Datum: ${isoToGermanDate(existing.date)}`,
+    `Zeit: ${existing.startTime}–${existing.endTime}`,
+    `Kategorien: ${existing.categories.join(", ")}`,
+    `Name: ${existing.name || "(leer)"}`,
+    `Notiz: ${existing.notes || "(leer)"}`,
+    `Später: ${existing.reminders || "(leer)"}`,
+    "",
+    "NEUES TRANSKRIPT (Ergänzung/Korrektur):",
+    transcript,
+  ];
+  return lines.join("\n");
+}
+
+function buildSupplementSystemPrompt(today: string): string {
+  const todayGerman = isoToGermanDate(today);
+  return [
+    "Du ergänzt oder korrigierst einen BESTEHENDEN Arbeitszeit-Eintrag aus gesprochener deutscher Sprache.",
+    "Kontext: Mitarbeiter/in in einem Bestattungsunternehmen.",
+    "",
+    "Der Nutzer hat wenig Zeit und spricht nur die NEUEN oder KORRIGIERTEN Informationen.",
+    "Datum, Zeiten und Kategorien müssen NICHT erneut genannt werden, wenn sie unverändert bleiben.",
+    "",
+    "Antworte NUR mit STRICT JSON (kein Markdown, kein Text).",
+    "Output-Schema:",
+    "{",
+    '  "entries": [',
+    "    {",
+    '      "date": "TT.MM.JJJJ" | "",',
+    '      "startTime": "HH:mm" | "",',
+    '      "endTime": "HH:mm" | "",',
+    '      "categories": [...] | [],',
+    '      "name": string,',
+    '      "notes": string,',
+    '      "reminders": string',
+    "    }",
+    "  ]",
+    "}",
+    "",
+    "REGELN FÜR ERGÄNZUNGEN:",
+    "- Leere Strings bei date/startTime/endTime = bestehende Werte beibehalten.",
+    "- Leeres categories-Array = bestehende Kategorien beibehalten.",
+    "- Neue Kategorien nur setzen, wenn im Transkript explizit erwähnt; dann bestehende + neue.",
+    '- "name": nur setzen wenn Name genannt oder korrigiert; sonst leerer String.',
+    '- "notes": NUR den NEUEN Notiz-Text (Ergänzung), nicht die bestehende Notiz wiederholen.',
+    '- "reminders": NUR neue Erinnerungen/Hinweise, nicht bestehende wiederholen.',
+    "- Zeiten nur ändern, wenn im Transkript neue Zeiten genannt werden.",
+    `- Datum nur ändern, wenn im Transkript ein anderes Datum genannt wird; sonst leer. Heute: ${todayGerman}.`,
+    "",
+    "Typische Ergänzungen:",
+    '- "Name war Frau Müller" → name setzen, Rest leer',
+    '- "Noch Friedhof Nord besucht" → notes mit neuem Text, Rest leer',
+    '- "Bis 13 Uhr statt 12:30" → endTime korrigieren',
+    "",
+    "Immer genau EIN Eintrag im Array (kein Splitting bei Ergänzungen).",
+    "",
+    LOCATION_CORRECTION_PROMPT,
+  ].join("\n");
+}
+
 function buildSystemPrompt(today: string): string {
   const todayGerman = isoToGermanDate(today);
   return [
     "Du extrahierst strukturierte Arbeitszeit-Einträge aus gesprochener, informeller deutscher Sprache.",
-    "Kontext: Mitarbeiter/in in einem Bestattungsunternehmen (Aufbahrung, Beerdigung, Fahrdienst, Krematorium, Sonstiges).",
+    "Kontext: Mitarbeiter/in in einem Bestattungsunternehmen (Aufbahrung, Einsargung, Beerdigung, Fahrdienst, Krematorium, Sonstiges).",
     "",
     "Antworte NUR mit STRICT JSON (kein Markdown, kein Text, keine Erklärungen).",
     "Output-Schema:",
@@ -219,7 +361,7 @@ function buildSystemPrompt(today: string): string {
     '      "date": "TT.MM.JJJJ",',
     '      "startTime": "HH:mm",',
     '      "endTime": "HH:mm",',
-    '      "categories": ["Beerdigung"|"Aufbahrung"|"Krematorium"|"Fahrdienst"|"Sonstiges", ...],',
+    '      "categories": ["Beerdigung"|"Aufbahrung"|"Einsargung"|"Krematorium"|"Fahrdienst"|"Sonstiges", ...],',
     '      "name": string,',
     '      "notes": string,',
     '      "reminders": string',
@@ -273,6 +415,7 @@ function buildSystemPrompt(today: string): string {
     "Nur Kategorien vergeben, die im genannten Zeitraum tatsächlich vorkamen.",
     "Nicht raten. Krematorium nur bei echter Krematoriums-Tätigkeit.",
     "Mehrfachauswahl erlaubt (z.B. Aufbahrung + Fahrdienst).",
+    'Kategorie "Einsargung": Verstorbene/n in den Sarg legen; Familie kann nochmal Abschied nehmen — nicht mit Aufbahrung verwechseln.',
     "Mindestens 1 Kategorie — niemals leeres Array.",
     'Wenn nichts Spezifisches passt: "Sonstiges".',
     'Bei Fahrten oder "unterwegs": "Fahrdienst".',
@@ -326,6 +469,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Kein Text vorhanden." }, { status: 400 });
   }
 
+  const existingEntry = parseExistingEntry(body);
+  const supplementMode = existingEntry !== null;
+
   const client = new OpenAI({ apiKey });
   const today = isoToday();
 
@@ -334,8 +480,16 @@ export async function POST(req: Request) {
       model: "gpt-4o-mini",
       temperature: 0,
       messages: [
-        { role: "system", content: buildSystemPrompt(today) },
-        { role: "user", content: transcript },
+        {
+          role: "system",
+          content: supplementMode ? buildSupplementSystemPrompt(today) : buildSystemPrompt(today),
+        },
+        {
+          role: "user",
+          content: supplementMode
+            ? buildSupplementUserMessage(existingEntry, transcript)
+            : transcript,
+        },
       ],
     });
 
@@ -363,7 +517,7 @@ export async function POST(req: Request) {
 
     const entries: ParsedEntry[] = [];
     for (let i = 0; i < rawEntries.length; i++) {
-      const validated = validateEntry(rawEntries[i], transcript, today, i);
+      const validated = validateEntry(rawEntries[i], transcript, today, i, existingEntry);
       if (validated) entries.push(validated);
     }
 

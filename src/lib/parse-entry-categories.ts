@@ -3,6 +3,7 @@ import type { Category } from "@/lib/types";
 const ALL_CATEGORIES: Category[] = [
   "Beerdigung",
   "Aufbahrung",
+  "Einsargung",
   "Krematorium",
   "Fahrdienst",
   "Sonstiges",
@@ -10,6 +11,7 @@ const ALL_CATEGORIES: Category[] = [
 
 const KEYWORD_RULES: { pattern: RegExp; category: Category }[] = [
   { pattern: /\b(unterwegs|gefahren|fahrt|fahrten|transport|ueberfuehrt|überführt|abholen|bringe|gebracht)\b/i, category: "Fahrdienst" },
+  { pattern: /\b(einsargung|eingesargt|einsargen|in den sarg)\b/i, category: "Einsargung" },
   { pattern: /\b(aufbahrung|aufgebahrt|aufba(h|h)ren)\b/i, category: "Aufbahrung" },
   { pattern: /\b(beerdigung|beisetzung|trauerfeier|friedhof|verabschiedung)\b/i, category: "Beerdigung" },
   { pattern: /\b(krematorium|einaescherung|einäscherung|kremation)\b/i, category: "Krematorium" },

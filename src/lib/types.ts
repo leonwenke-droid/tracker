@@ -1,6 +1,7 @@
 export type Category =
   | "Beerdigung"
   | "Aufbahrung"
+  | "Einsargung"
   | "Krematorium"
   | "Fahrdienst"
   | "Sonstiges";

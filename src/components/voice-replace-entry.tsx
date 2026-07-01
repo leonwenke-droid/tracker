@@ -24,10 +24,12 @@ export function VoiceReplaceEntry({
   open,
   onClose,
   onApply,
+  existingValues,
 }: {
   open: boolean;
   onClose: () => void;
   onApply: (values: VoiceReplaceValues) => void;
+  existingValues: VoiceReplaceValues;
 }) {
   const voice = useVoiceCapture();
   const { reset: resetVoice, step, transcript, liveText, error: voiceError, start, stop, support } = voice;
@@ -65,7 +67,7 @@ export function VoiceReplaceEntry({
       const res = await fetch("/api/parse-entry", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text }),
+        body: JSON.stringify({ transcript: text, existingEntry: existingValues }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -85,7 +87,7 @@ export function VoiceReplaceEntry({
       }
       if (entries.length > 1) {
         setMultiEntryWarning(
-          `${entries.length} Einträge erkannt – es wird nur der erste übernommen. Weitere Einträge bitte separat über „Sprechen“ anlegen.`,
+          "Mehrere Einträge erkannt — es wird nur der erste übernommen. Weitere bitte separat anlegen.",
         );
       }
       const parsed = entries[0];
@@ -146,7 +148,7 @@ export function VoiceReplaceEntry({
   return (
     <Card className="flex flex-col gap-3 border border-[var(--accent)]">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-semibold">Per Sprache korrigieren</div>
+        <div className="font-semibold">Per Sprache ergänzen</div>
         <button
           type="button"
           onClick={handleCancel}
@@ -165,7 +167,8 @@ export function VoiceReplaceEntry({
       {panelStep === "capture" ? (
         <>
           <div className="text-sm text-[var(--muted)]">
-            Sprich den Eintrag komplett neu – Datum, Zeiten, Kategorien, Name und Notizen.
+            Sprich nur die Ergänzungen — z. B. Name, Notiz oder korrigierte Zeiten. Bestehende
+            Angaben bleiben erhalten.
           </div>
 
           {(step === "ready" || step === "listening") && (
